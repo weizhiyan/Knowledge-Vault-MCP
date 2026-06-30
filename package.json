@@ -1,0 +1,25 @@
+{
+  "name": "obsidian-knowledge-mcp",
+  "version": "0.1.0",
+  "description": "Local MCP server for an Obsidian work knowledge vault and AgentShell config injection.",
+  "type": "module",
+  "bin": {
+    "obsidian-knowledge-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.15.0",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
