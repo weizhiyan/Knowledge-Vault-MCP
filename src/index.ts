@@ -179,6 +179,23 @@ server.tool(
 );
 
 server.tool(
+  "knowledge.writeSplitNote",
+  "Create or append a one-main-one-appendix note pair with Obsidian backlinks. Use after knowledge.planNoteWrite returns split_write and the user confirms.",
+  {
+    title: z.string().min(1).describe("Human-readable note title. Used for default file names when paths are not provided."),
+    mainContent: z.string().min(1).describe("Clean main note content for both the user and AI."),
+    appendixContent: z.string().optional().describe("AI appendix content such as sources, prompts, reasoning, process, or version notes. Defaults to mainContent when omitted."),
+    category: z.string().optional().describe("Optional category hint, e.g. product_positioning, design_strategy, ai_share, skill_tutorial, article."),
+    projectName: z.string().optional().describe("Known project name; when present the main note path is inferred inside the project."),
+    targetPath: z.string().optional().describe("Optional explicit vault-relative main note path."),
+    appendixPath: z.string().optional().describe("Optional explicit vault-relative appendix path."),
+    appendixKind: z.string().optional().describe("Appendix suffix, default AI附录. Examples: 推导, 提示词库, 版本记录."),
+    mode: z.enum(["append", "replace"]).default("append").describe("Append to existing notes by default; replace only after explicit user confirmation."),
+  },
+  async (input) => toTextResult(await vault.writeSplitNote(input)),
+);
+
+server.tool(
   "knowledge.update",
   "Append to or replace one knowledge file. Use only after user confirmation for writes.",
   {

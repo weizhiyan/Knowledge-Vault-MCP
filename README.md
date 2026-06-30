@@ -166,6 +166,7 @@ npm start
 - `knowledge.classifyEntry`：把内容路由到中文目录
 - `knowledge.suggestTarget`：返回给宿主软件的 `user_choice`
 - `knowledge.store`：创建或追加到一个知识文件
+- `knowledge.writeSplitNote`：创建或追加“一主一辅”笔记，自动写入双链
 - `knowledge.update`：追加或替换文件内容
 - `knowledge.updateSection`：更新某个 H2 小节
 
@@ -210,6 +211,8 @@ npm start
 - `ask_user`：需要你确认放哪
 - `split_write`：建议拆分成一份主笔记和一份 AI 侧说明
 
+当结果是 `split_write` 时，agent 应该先询问你是否确认拆分；确认后调用 `knowledge.writeSplitNote`。
+
 ## 拆分策略
 
 默认不是做两套完整知识库。
@@ -219,6 +222,15 @@ npm start
 1. 一份主笔记，给人和知识图谱用
 2. 必要时加一个 AI 附录，放 prompt、结构化总结、写作提示
 3. 两者用链接互相指向，避免重复维护
+
+`knowledge.writeSplitNote` 会自动完成这件事。比如主文档是 `产品定位.md`，默认会生成或追加：
+
+- `产品定位.md`
+- `产品定位_AI附录.md`
+
+主文档里会写入 `[[产品定位_AI附录]]`，附录里会写入 `[[产品定位]]`。如果你用 Obsidian 打开同一个文件夹，图谱会自动连起来。
+
+默认模式是 `append`，也就是不覆盖已有内容；只有明确传入 `mode: "replace"` 才会替换原文件。
 
 ## AgentShell 交互层
 

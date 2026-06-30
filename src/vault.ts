@@ -228,6 +228,39 @@ export interface NotePlanReport {
   recommendations: string[];
 }
 
+export interface SplitNoteWriteInput {
+  title: string;
+  mainContent: string;
+  appendixContent?: string;
+  category?: string;
+  projectName?: string;
+  targetPath?: string;
+  appendixPath?: string;
+  appendixKind?: string;
+  mode?: "append" | "replace";
+}
+
+export interface SplitNoteWriteReport {
+  strategy: "one_main_one_appendix";
+  classification: {
+    category: KnowledgeCategory;
+    confidence: number;
+    reason: string;
+  };
+  main: {
+    path: string;
+    mode: "created" | "appended" | "replaced";
+    link: string;
+  };
+  appendix: {
+    path: string;
+    mode: "created" | "appended" | "replaced";
+    link: string;
+  };
+  graphLinks: string[];
+  recommendations: string[];
+}
+
 export interface ConnectorStatusInput {
   manifestPath?: string;
   connectorId?: string;
@@ -294,6 +327,24 @@ interface ConnectorReleaseInfo {
 }
 
 type KnowledgeCategory = "product_background" | "product_feature" | "product_advantage" | "product_positioning" | "user_insight" | "business" | "design_strategy" | "design_resource" | "ai_share" | "skill_tutorial" | "article" | "competitor" | "iteration" | "reference" | "inbox";
+
+const KNOWLEDGE_CATEGORY_VALUES: readonly KnowledgeCategory[] = [
+  "product_background",
+  "product_feature",
+  "product_advantage",
+  "product_positioning",
+  "user_insight",
+  "business",
+  "design_strategy",
+  "design_resource",
+  "ai_share",
+  "skill_tutorial",
+  "article",
+  "competitor",
+  "iteration",
+  "reference",
+  "inbox",
+];
 
 export class VaultService {
   constructor(private readonly vaultRoot: string) {}
@@ -567,6 +618,83 @@ export class VaultService {
       : input.content.trim() + "\n";
     await fs.writeFile(absolutePath, content, "utf-8");
     return { path: targetPath, mode: existing ? "replaced" : "created" };
+  }
+
+  async writeSplitNote(input: SplitNoteWriteInput): Promise<SplitNoteWriteReport> {
+    const title = sanitizePathSegment(input.title);
+    const combinedContent = `${input.title}\n${input.mainContent}\n${input.appendixContent ?? ""}`;
+    const detectedClassification = classifyKnowledgeContent(combinedContent);
+    const categoryOverride = parseKnowledgeCategory(input.category);
+    const classification = categoryOverride
+      ? {
+        category: categoryOverride,
+        confidence: Math.max(detectedClassification.confidence, 0.9),
+        reason: `使用调用方提供的分类：${categoryOverride}；自动检测结果为 ${detectedClassification.category}。`,
+      }
+      : detectedClassification;
+    const targetPath = input.targetPath
+      ? normalizeMarkdownPath(input.targetPath)
+      : input.projectName
+        ? await this.targetPathForProjectCategory(input.projectName, classification.category)
+        : this.defaultSplitNotePath(classification.category, title);
+    const appendixPath = input.appendixPath
+      ? normalizeMarkdownPath(input.appendixPath)
+      : buildAppendixPath(targetPath, input.appendixKind);
+    const today = formatDate(new Date());
+    const mainLink = wikilinkForPath(targetPath);
+    const appendixLink = wikilinkForPath(appendixPath);
+    const mode = input.mode ?? "append";
+
+    const mainWrite = await this.writeLinkedNote({
+      path: targetPath,
+      title: path.basename(targetPath, MARKDOWN_EXTENSION),
+      body: renderSplitMainBody({
+        content: input.mainContent,
+        appendixLink,
+        date: today,
+      }),
+      tags: [...tagsForPath(targetPath), "主文档"],
+      mode,
+      date: today,
+    });
+    const appendixWrite = await this.writeLinkedNote({
+      path: appendixPath,
+      title: path.basename(appendixPath, MARKDOWN_EXTENSION),
+      body: renderSplitAppendixBody({
+        content: input.appendixContent ?? input.mainContent,
+        mainLink,
+        date: today,
+        appendixKind: input.appendixKind,
+      }),
+      tags: [...tagsForPath(appendixPath), "AI附录"],
+      mode,
+      date: today,
+    });
+
+    return {
+      strategy: "one_main_one_appendix",
+      classification: {
+        category: classification.category,
+        confidence: classification.confidence,
+        reason: classification.reason,
+      },
+      main: {
+        path: targetPath,
+        mode: mainWrite.mode,
+        link: mainLink,
+      },
+      appendix: {
+        path: appendixPath,
+        mode: appendixWrite.mode,
+        link: appendixLink,
+      },
+      graphLinks: [appendixLink, mainLink],
+      recommendations: [
+        "已按一套主知识库 + AI 附录写入，不会生成两套完整知识库。",
+        `主文档包含 ${appendixLink}，AI 附录包含 ${mainLink}，Obsidian 会形成双链图谱。`,
+        "后续面向用户阅读时优先维护主文档；prompt、推导、流程、版本记录放入 AI 附录。",
+      ],
+    };
   }
 
   async suggestKnowledgeTarget(input: SuggestKnowledgeTargetInput): Promise<UserChoicePayload> {
@@ -1161,6 +1289,40 @@ export class VaultService {
     await fs.writeFile(absolutePath, updated, "utf-8");
   }
 
+  private async writeLinkedNote(input: {
+    path: string;
+    title: string;
+    body: string;
+    tags: string[];
+    mode: "append" | "replace";
+    date: string;
+  }): Promise<{ path: string; mode: "created" | "appended" | "replaced" }> {
+    const absolutePath = this.resolveSafe(input.path);
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    const existing = await this.statIfExists(absolutePath);
+
+    if (!existing || input.mode === "replace") {
+      const content = renderBasicDocument(input.title, [...new Set(input.tags)], input.date) + input.body.trim() + "\n";
+      await fs.writeFile(absolutePath, content, "utf-8");
+      return { path: input.path, mode: existing ? "replaced" : "created" };
+    }
+
+    await fs.appendFile(absolutePath, `\n\n${input.body.trim()}\n`, "utf-8");
+    await this.touchFrontmatterDate(input.path, input.date);
+    return { path: input.path, mode: "appended" };
+  }
+
+  private defaultSplitNotePath(category: KnowledgeCategory, title: string): string {
+    const fileName = sanitizePathSegment(title || "待整理");
+    if (category === "design_strategy") return `02-Design/设计策略/${fileName}.md`;
+    if (category === "design_resource") return `02-Design/案例收集/${fileName}.md`;
+    if (category === "ai_share") return `03-AI-Share/工作流/${fileName}.md`;
+    if (category === "skill_tutorial") return `04-Skills-Tutorials/教程/${fileName}.md`;
+    if (category === "article") return `05-Articles/草稿/${fileName}.md`;
+    if (category === "reference") return `06-Reference/技术文档/${fileName}.md`;
+    return `00-Inbox/${fileName}.md`;
+  }
+
   private async writeTemplateFiles(): Promise<void> {
     const today = formatDate(new Date());
     await this.writeIfMissing("07-Templates/项目概览模板.md", renderProjectOverview({ name: "项目名", type: "工作项目", status: "进行中", date: today }));
@@ -1294,6 +1456,30 @@ function renderKnowledgeEntry(content: string, date: string, title?: string): st
     : `\n\n> 记录时间：${date}\n\n${content.trim()}\n`;
 }
 
+function renderSplitMainBody(input: { content: string; appendixLink: string; date: string }): string {
+  return `## 核心内容
+> 记录时间：${input.date}
+
+${input.content.trim()}
+
+## AI 附录
+- ${input.appendixLink}
+`;
+}
+
+function renderSplitAppendixBody(input: { content: string; mainLink: string; date: string; appendixKind?: string }): string {
+  const title = input.appendixKind ?? "AI 附录";
+  return `## ${title}
+> 记录时间：${input.date}
+
+## 对应主文档
+- ${input.mainLink}
+
+## 资料、过程、提示词
+${input.content.trim()}
+`;
+}
+
 function renderComparisonReport(dimension: string, projects: Array<{ project: ProjectSummary; sections: Record<string, string> }>): string {
   const dimensionTitle = {
     users: "用户群对比",
@@ -1408,6 +1594,11 @@ function classifyKnowledgeContent(content: string): { category: KnowledgeCategor
   };
 }
 
+function parseKnowledgeCategory(value: string | undefined): KnowledgeCategory | undefined {
+  if (!value) return undefined;
+  return KNOWLEDGE_CATEGORY_VALUES.find((category) => category === value);
+}
+
 function targetPathForGlobalCategory(category: KnowledgeCategory): string {
   const targets: Record<KnowledgeCategory, string> = {
     product_background: "00-Inbox/待整理.md",
@@ -1427,6 +1618,20 @@ function targetPathForGlobalCategory(category: KnowledgeCategory): string {
     inbox: "00-Inbox/待整理.md",
   };
   return targets[category];
+}
+
+function buildAppendixPath(mainPath: string, appendixKind?: string): string {
+  const normalizedPath = normalizeMarkdownPath(mainPath);
+  const directory = path.posix.dirname(normalizedPath);
+  const basename = path.posix.basename(normalizedPath, MARKDOWN_EXTENSION);
+  const suffix = sanitizePathSegment(appendixKind ?? "AI附录");
+  const fileName = `${basename}_${suffix}.md`;
+  return directory === "." ? fileName : `${directory}/${fileName}`;
+}
+
+function wikilinkForPath(filePath: string): string {
+  const basename = path.posix.basename(normalizeMarkdownPath(filePath), MARKDOWN_EXTENSION);
+  return `[[${basename}]]`;
 }
 
 function updateMarkdownSection(
