@@ -47,8 +47,8 @@ const DEFAULT_MCP_TOOLS: McpToolDescription[] = [
   { name: "knowledge.get", description: "读取知识库中的指定 Markdown 文件" },
   { name: "knowledge.getSection", description: "按 H2 标题精准读取单个 Markdown 章节" },
   { name: "knowledge.sections", description: "列出 Markdown 的 H2 目录和短摘录" },
-  { name: "knowledge.projects", description: "列出 01-Projects 下的项目" },
-  { name: "knowledge.loadProject", description: "加载项目 _项目概览.md 背景" },
+  { name: "knowledge.projects", description: "列出 01-项目 下的项目" },
+  { name: "knowledge.loadProject", description: "加载项目 _AI索引.md 背景" },
   { name: "knowledge.createProject", description: "创建项目知识库结构" },
   { name: "knowledge.createIteration", description: "创建项目迭代记录" },
   { name: "knowledge.classifyEntry", description: "根据内容给出知识条目归档建议" },
@@ -215,7 +215,7 @@ function buildTemplateData(options: Omit<InjectionOptions, "projectRoot" | "targ
       name: kb.name,
       description: kb.description,
       retrievalTopK: kb.retrievalTopK ?? 5,
-      usageScenario: kb.usageScenario ?? "当用户问题涉及此知识库覆盖的项目、业务、设计或历史决策时检索。",
+      usageScenario: kb.usageScenario ?? "仅当用户明确聊到某个公司项目、产品、项目背景、功能、优势、定位或历史决策时检索；普通聊天、个人文章、草稿和非项目内容默认不检索。",
     })),
     mcpServerUrl: options.mcpServerUrl ?? `stdio: obsidian-knowledge-mcp`,
     mcpTools: (options.mcpTools ?? DEFAULT_MCP_TOOLS).slice(0, 10),
@@ -256,7 +256,7 @@ function renderClaudeMemory(data: TemplateData): string {
 function renderClaudeKnowledge(data: TemplateData): string {
   if (!data.knowledgeBases.length) return "";
 
-  return `## 📖 知识库\n\n你可以访问以下知识库，在回答相关问题前优先检索：\n\n${data.knowledgeBases.map((kb) => `### ${kb.name}\n- **内容范围：** ${kb.description}\n- **检索工具：** \`knowledge://search?vault=${kb.id}&q={关键词}&k=${kb.retrievalTopK}\`\n- **直接读取：** \`knowledge://get?vault=${kb.id}&path={文件路径}\`\n- **适用场景：** ${kb.usageScenario}`).join("\n\n")}\n\n**知识库使用原则：**\n1. 新 Agent 接入时先读取 \`knowledge.skills\` 和 \`knowledge.outline\`，理解分类大纲与写入规范\n2. 遇到涉及以上知识范围的问题，先检索知识库再回答\n3. 长文档先用 \`knowledge.sections\` 看目录，再用 \`knowledge.getSection\` 精准读取\n4. 写入前先用 \`knowledge.classifyEntry\` 或 \`knowledge.suggestTarget\`，低置信度内容放入 00-Inbox\n5. 引用知识库内容时，标注来源文件名`;
+  return `## 📖 知识库\n\n你可以访问以下知识库，但只在用户问题明确涉及公司项目或产品时检索：\n\n${data.knowledgeBases.map((kb) => `### ${kb.name}\n- **内容范围：** ${kb.description}\n- **检索工具：** \`knowledge://search?vault=${kb.id}&q={关键词}&k=${kb.retrievalTopK}&scope=projects\`\n- **直接读取：** \`knowledge://get?vault=${kb.id}&path={文件路径}\`\n- **适用场景：** ${kb.usageScenario}`).join("\n\n")}\n\n**知识库使用原则：**\n1. 默认只检索 \`01-项目\`，也就是公司项目知识库\n2. 只有用户提到具体项目、公司产品、项目背景、功能、优势、定位、页面分析等内容时才检索\n3. 用户自己的文章、草稿、个人资料、非项目内容默认不检索，除非用户明确要求“搜整个知识库”或点名对应文件\n4. 长文档先用 \`knowledge.sections\` 看目录，再用 \`knowledge.getSection\` 精准读取\n5. 写入前先判断是否属于项目；不属于项目且用户未要求入库时，不主动创建目录或检索\n6. 引用知识库内容时，标注来源文件名`;
 }
 
 function renderClaudeConstraints(): string {
@@ -291,7 +291,7 @@ function renderAgentsMemory(data: TemplateData): string {
 function renderAgentsKnowledge(data: TemplateData): string {
   if (!data.knowledgeBases.length) return "";
 
-  return `## Knowledge Bases\n\nSearch these knowledge bases before answering related questions:\n\n${data.knowledgeBases.map((kb) => `- **${kb.name}**: \`knowledge://search?vault=${kb.id}&q={query}&k=${kb.retrievalTopK}\`\n  Coverage: ${kb.description}`).join("\n")}\n\nRules:\n- Read \`knowledge.skills\` and \`knowledge.outline\` when first using this vault\n- Always search before answering domain-specific questions\n- Use \`knowledge.sections\` before reading long files, then \`knowledge.getSection\`\n- Classify or ask for a target before writing; use 00-Inbox for low-confidence content\n- Cite the source file when referencing knowledge base content`;
+  return `## Knowledge Bases\n\nUse these knowledge bases only when the user is discussing company projects or products:\n\n${data.knowledgeBases.map((kb) => `- **${kb.name}**: \`knowledge://search?vault=${kb.id}&q={query}&k=${kb.retrievalTopK}&scope=projects\`\n  Coverage: ${kb.description}`).join("\n")}\n\nRules:\n- Default search scope is \`01-项目\` only\n- Search only when the user mentions a specific project, company product, project background, features, advantages, positioning, or page/design analysis\n- Do not search personal articles, drafts, or non-project notes by default unless the user explicitly asks to search the whole vault or names a file\n- Use \`knowledge.sections\` before reading long files, then \`knowledge.getSection\`\n- Cite the source file when referencing knowledge base content`;
 }
 
 function renderAgentsConstraints(): string {

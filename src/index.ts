@@ -17,7 +17,7 @@ const server = new McpServer({
 
 server.tool(
   "knowledge.ensureBaseStructure",
-  "Create the recommended AI-readable WorkVault folders and templates for work/product, design, AI sharing, skills/tutorials, articles, and references.",
+  "Ensure the vault root exists without pre-creating category folders. Category folders are created only when real content is written.",
   {},
   async () => toTextResult(await vault.ensureBaseStructure()),
 );
@@ -68,14 +68,14 @@ server.tool(
 
 server.tool(
   "knowledge.projects",
-  "List projects under 01-Projects without reading every project file.",
+  "List projects under 01-项目 without reading every project file.",
   {},
   async () => toTextResult(await vault.listProjects()),
 );
 
 server.tool(
   "knowledge.loadProject",
-  "Load one project's _项目概览.md as the high-signal project background.",
+  "Load one project's _AI索引.md as the high-signal project background.",
   {
     projectName: z.string().min(1).describe("Project name or partial project name."),
   },
@@ -84,12 +84,13 @@ server.tool(
 
 server.tool(
   "knowledge.search",
-  "Search markdown file names, titles, tags, frontmatter, and content. Returns top matches with excerpts only.",
+  "Search markdown file names, titles, tags, frontmatter, and content. Defaults to company/project knowledge under 01-项目; use all only when the user explicitly asks to search the whole vault.",
   {
     query: z.string().min(1).describe("Search query or keywords."),
     limit: z.number().int().positive().max(20).default(5).describe("Maximum number of results."),
+    scope: z.enum(["projects", "all"]).default("projects").describe("Search scope. projects searches 01-项目 only; all searches the whole vault only when explicitly requested."),
   },
-  async ({ query, limit }) => toTextResult(await vault.search(query, limit)),
+  async ({ query, limit, scope }) => toTextResult(await vault.search(query, limit, scope)),
 );
 
 server.tool(
@@ -124,7 +125,7 @@ server.tool(
 
 server.tool(
   "knowledge.createProject",
-  "Create a project knowledge-base folder with overview, user, feature, positioning, design, competitor, and iteration files.",
+  "Create a project knowledge-base folder with the three-file structure: 项目介绍, _AI索引, and 原始资料.",
   {
     name: z.string().min(1).describe("Project folder name."),
     type: z.string().optional().describe("Project type, e.g. 产品设计项目."),
@@ -224,7 +225,7 @@ server.tool(
   "knowledge.archiveInbox",
   "Move/copy/append one inbox markdown file into a target knowledge file. Use only after user confirmation.",
   {
-    inboxPath: z.string().min(1).describe("Inbox markdown path, e.g. 00-Inbox/foo.md."),
+    inboxPath: z.string().min(1).describe("Inbox markdown path, e.g. 00-收件箱/foo.md."),
     targetPath: z.string().min(1).describe("Target vault-relative markdown path."),
     mode: z.enum(["append", "move", "copy"]).default("append"),
     title: z.string().optional().describe("Optional title when appending/copying."),
@@ -234,7 +235,7 @@ server.tool(
 
 server.tool(
   "knowledge.inbox",
-  "List 00-Inbox markdown items with excerpts and a user_choice payload for archive triage.",
+  "List 00-收件箱 markdown items with excerpts and a user_choice payload for archive triage.",
   {},
   async () => toTextResult(await vault.listInbox()),
 );
@@ -261,7 +262,7 @@ server.tool(
 
 server.tool(
   "knowledge.userAnalysisContext",
-  "Load 用户画像.md and return analysis-dimension choices for AgentShell.",
+  "Load the project _AI索引.md and return user-analysis dimension choices for AgentShell.",
   {
     projectName: z.string().min(1),
   },
@@ -279,7 +280,7 @@ server.tool(
 
 server.tool(
   "knowledge.competitorAnalysisContext",
-  "Load 竞品分析.md, report staleness, and return comparison-dimension choices for AgentShell.",
+  "Load the project _AI索引.md, report staleness, and return comparison-dimension choices for AgentShell.",
   {
     projectName: z.string().min(1),
   },
@@ -288,11 +289,11 @@ server.tool(
 
 server.tool(
   "knowledge.weeklyBrief",
-  "Generate a weekly or monthly work brief from recent iteration records. Can save to 08-Journal after confirmation.",
+  "Generate a weekly or monthly work brief from recent iteration records. Can save to 08-日志 after confirmation, creating that folder only when needed.",
   {
     period: z.enum(["week", "month"]).default("week"),
     projectName: z.string().optional(),
-    save: z.boolean().default(false).describe("Save generated brief to 08-Journal when true."),
+    save: z.boolean().default(false).describe("Save generated brief to 08-日志 when true."),
   },
   async (input) => toTextResult(await vault.weeklyBrief(input)),
 );

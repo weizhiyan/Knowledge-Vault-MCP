@@ -3,42 +3,42 @@ import path from "node:path";
 import { ProjectSummary, SearchResult, UserChoicePayload } from "./types.js";
 
 const MARKDOWN_EXTENSION = ".md";
-const CORE_PROJECT_FILES = ["_项目概览.md", "用户画像.md", "产品功能.md", "设计规范.md", "竞品分析.md"];
+const CORE_PROJECT_FILES = ["_AI索引.md", "项目介绍.md", "原始资料.md"];
 const KNOWLEDGE_AREAS = [
   {
     id: "work_product",
     name: "工作/产品业务",
-    root: "01-Projects",
+    root: "01-项目",
     description: "产品背景、功能、优势、定位、目标用户、业务逻辑、迭代记录。",
   },
   {
     id: "design",
     name: "设计知识",
-    root: "02-Design",
+    root: "02-设计",
     description: "设计策略、设计规范、组件规范、案例收集、工具方法。",
   },
   {
     id: "ai_share",
     name: "AI 分享",
-    root: "03-AI-Share",
-    description: "AI 经验、工作流分享、提示词方法、案例复盘。",
+    root: "03-AI分享",
+    description: "AI 经验、工作流分享、提示词方法、案例复盘；默认单文档保存。",
   },
   {
     id: "skills_tutorials",
     name: "Skill/教程",
-    root: "04-Skills-Tutorials",
-    description: "自己收集或编写的 skill、教程、操作手册、使用指南。",
+    root: "04-技能教程",
+    description: "自己收集或编写的 skill、教程、操作手册、使用指南；默认单文档保存。",
   },
   {
     id: "articles",
     name: "文章写作",
-    root: "05-Articles",
+    root: "05-文章",
     description: "自己写的文章、草稿、观点、发布素材。",
   },
   {
     id: "reference",
     name: "参考收集",
-    root: "06-Reference",
+    root: "06-参考资料",
     description: "外部资料、行业报告、设计趋势、技术文档、灵感摘录。",
   },
 ] as const;
@@ -49,7 +49,7 @@ const BUILT_IN_SKILLS = [
     name: "创建工作/产品项目知识库",
     category: "create",
     triggers: ["新建项目", "创建产品知识库", "新项目"],
-    description: "按产品/业务项目结构创建项目概览、背景、功能、优势、定位、用户画像、设计规范、竞品分析和迭代记录。",
+    description: "按项目介绍、AI索引、原始资料三层结构创建项目知识库，避免生成空散点文件。",
     safeguards: ["创建前确认项目名称和类型", "不覆盖已有文件", "所有文件带 frontmatter"],
   },
   {
@@ -73,7 +73,7 @@ const BUILT_IN_SKILLS = [
     name: "加载项目/主题背景",
     category: "read",
     triggers: ["关于某项目", "帮我做某产品", "读取背景"],
-    description: "先加载项目概览或主题索引，再按需读取 1-3 个相关章节，控制上下文体积。",
+    description: "项目先加载 _AI索引；非项目主题只有用户点名时读取对应单文档，控制上下文体积。",
     safeguards: ["不一次读取整个 vault", "长文档先列目录", "引用来源文件"],
   },
   {
@@ -81,7 +81,7 @@ const BUILT_IN_SKILLS = [
     name: "收件箱整理",
     category: "organize",
     triggers: ["整理收件箱", "归档", "清理待整理"],
-    description: "逐条查看 00-Inbox 内容，分类后移动或追加到目标知识文件。",
+    description: "逐条查看 00-收件箱 内容，分类后移动或追加到目标知识文件。",
     safeguards: ["逐条确认", "允许跳过", "不自动删除未确认内容"],
   },
   {
@@ -354,52 +354,31 @@ export class VaultService {
   }
 
   async ensureBaseStructure(): Promise<string[]> {
-    const directories = [
-      "00-Inbox",
-      "01-Projects",
-      "02-Design/设计原则",
-      "02-Design/设计策略",
-      "02-Design/组件规范",
-      "02-Design/案例收集",
-      "02-Design/工具使用",
-      "03-AI-Share/工作流",
-      "03-AI-Share/提示词",
-      "03-AI-Share/案例复盘",
-      "04-Skills-Tutorials/Skill收集",
-      "04-Skills-Tutorials/教程",
-      "04-Skills-Tutorials/工具手册",
-      "05-Articles/草稿",
-      "05-Articles/已发布",
-      "06-Reference/行业报告",
-      "06-Reference/设计趋势",
-      "06-Reference/技术文档",
-      "07-Templates",
-      "08-Journal",
-    ];
-
-    await Promise.all(directories.map((directory) => fs.mkdir(this.resolveSafe(directory), { recursive: true })));
-    await this.writeTemplateFiles();
-    return directories;
+    await fs.mkdir(this.resolveSafe("."), { recursive: true });
+    return [];
   }
 
   async listProjects(): Promise<ProjectSummary[]> {
-    const projectsRoot = this.resolveSafe("01-Projects");
+    const projectsRoot = this.resolveSafe("01-项目");
     const entries = await this.readDirectoryIfExists(projectsRoot);
     const directories = entries.filter((entry) => entry.isDirectory());
 
     return Promise.all(
       directories.map(async (entry) => {
-        const projectPath = `01-Projects/${entry.name}`;
-        const overviewPath = `${projectPath}/_项目概览.md`;
-        const overviewAbsolutePath = this.resolveSafe(overviewPath);
-        const stat = await this.statIfExists(overviewAbsolutePath);
-        const overview = stat ? await fs.readFile(overviewAbsolutePath, "utf-8") : undefined;
+        const projectPath = `01-项目/${entry.name}`;
+        const aiIndexPath = `${projectPath}/_AI索引.md`;
+        const legacyOverviewPath = `${projectPath}/_项目概览.md`;
+        const aiIndexStat = await this.statIfExists(this.resolveSafe(aiIndexPath));
+        const legacyStat = await this.statIfExists(this.resolveSafe(legacyOverviewPath));
+        const overviewPath = aiIndexStat ? aiIndexPath : legacyStat ? legacyOverviewPath : undefined;
+        const stat = overviewPath ? await this.statIfExists(this.resolveSafe(overviewPath)) : undefined;
+        const overview = overviewPath && stat ? await fs.readFile(this.resolveSafe(overviewPath), "utf-8") : undefined;
         const frontmatter = overview ? parseFrontmatter(overview) : {};
 
         return {
           name: entry.name,
           path: projectPath,
-          overviewPath: stat ? overviewPath : undefined,
+          overviewPath,
           status: frontmatter["项目状态"],
           updatedAt: frontmatter["最后更新"] ?? (stat ? formatDate(stat.mtime) : undefined),
         };
@@ -409,30 +388,29 @@ export class VaultService {
 
   async createProject(input: CreateProjectInput): Promise<ProjectSummary> {
     const projectName = sanitizePathSegment(input.name);
-    const projectPath = `01-Projects/${projectName}`;
+    const projectPath = `01-项目/${projectName}`;
     const projectRoot = this.resolveSafe(projectPath);
     const today = formatDate(new Date());
 
-    await fs.mkdir(path.join(projectRoot, "迭代记录"), { recursive: true });
-    await this.writeIfMissing(`${projectPath}/_项目概览.md`, renderProjectOverview({
+    await fs.mkdir(projectRoot, { recursive: true });
+    await this.writeIfMissing(`${projectPath}/${projectName}项目介绍.md`, renderProjectIntro({
       name: projectName,
       type: input.type ?? "工作项目",
       status: input.status ?? "进行中",
       date: today,
     }));
-    await this.writeIfMissing(`${projectPath}/产品背景.md`, renderBasicDocument("产品背景", ["项目", "背景"], today));
-    await this.writeIfMissing(`${projectPath}/产品功能.md`, renderBasicDocument("产品功能", ["功能", "待确认"], today));
-    await this.writeIfMissing(`${projectPath}/产品优势.md`, renderBasicDocument("产品优势", ["产品优势", "待确认"], today));
-    await this.writeIfMissing(`${projectPath}/产品定位.md`, renderBasicDocument("产品定位", ["产品定位", "待确认"], today));
-    await this.writeIfMissing(`${projectPath}/用户画像.md`, renderBasicDocument("用户画像", ["用户画像", "待确认"], today));
-    await this.writeIfMissing(`${projectPath}/设计规范.md`, renderBasicDocument("设计规范", ["设计方案", "待确认"], today));
-    await this.writeIfMissing(`${projectPath}/设计策略.md`, renderProductKnowledgeTemplate("设计策略", ["设计策略", "设计方案"], today, ["设计目标", "设计原则", "策略说明", "评估方式"]));
-    await this.writeIfMissing(`${projectPath}/竞品分析.md`, renderBasicDocument("竞品分析", ["竞品", "待确认"], today));
+    await this.writeIfMissing(`${projectPath}/_AI索引.md`, renderProjectAiIndex({
+      name: projectName,
+      type: input.type ?? "工作项目",
+      status: input.status ?? "进行中",
+      date: today,
+    }));
+    await this.writeIfMissing(`${projectPath}/原始资料.md`, renderRawMaterialDocument(projectName, today));
 
     return {
       name: projectName,
       path: projectPath,
-      overviewPath: `${projectPath}/_项目概览.md`,
+      overviewPath: `${projectPath}/_AI索引.md`,
       status: input.status ?? "进行中",
       updatedAt: today,
     };
@@ -440,7 +418,7 @@ export class VaultService {
 
   async loadProjectContext(projectName: string): Promise<{ project: ProjectSummary; content: string; relatedFiles: string[] }> {
     const project = await this.findProject(projectName);
-    if (!project.overviewPath) throw new Error(`项目 ${project.name} 缺少 _项目概览.md`);
+    if (!project.overviewPath) throw new Error(`项目 ${project.name} 缺少 AI索引`);
 
     const relatedFiles = await this.listProjectMarkdownFiles(project.name);
     return {
@@ -468,25 +446,23 @@ export class VaultService {
       skills: BUILT_IN_SKILLS,
       usage: [
         "Agent 接入后应先读取 skill 列表，按触发条件选择工作流。",
-        "写入知识库前优先调用 classifyEntry 或 suggestTarget，低置信度放入 00-Inbox。",
+        "写入知识库前优先调用 classifyEntry 或 suggestTarget，低置信度放入 00-收件箱。",
         "长文档读取先 sections 再 getSection，避免一次读完整库。",
       ],
     };
   }
 
-  async knowledgeOutline(): Promise<{ areas: typeof KNOWLEDGE_AREAS; templates: Array<{ path: string; purpose: string }> }> {
+  async knowledgeOutline(): Promise<{ areas: typeof KNOWLEDGE_AREAS; templates: Array<{ name: string; purpose: string }> }> {
     return {
       areas: KNOWLEDGE_AREAS,
       templates: [
-        { path: "07-Templates/项目概览模板.md", purpose: "工作/产品项目主背景，AI 必读" },
-        { path: "07-Templates/产品背景模板.md", purpose: "产品由来、问题、业务目标" },
-        { path: "07-Templates/产品功能模板.md", purpose: "功能说明、流程、边界、验收标准" },
-        { path: "07-Templates/产品优势模板.md", purpose: "差异化价值、竞争优势、证明材料" },
-        { path: "07-Templates/产品定位模板.md", purpose: "市场定位、目标人群、核心表达" },
-        { path: "07-Templates/设计策略模板.md", purpose: "设计目标、原则、策略和评估方式" },
-        { path: "07-Templates/AI分享模板.md", purpose: "AI 工作流、提示词、案例复盘" },
-        { path: "07-Templates/Skill教程模板.md", purpose: "skill、教程、操作步骤" },
-        { path: "07-Templates/文章模板.md", purpose: "文章草稿、观点和发布素材" },
+        { name: "项目介绍", purpose: "用户可读的项目主体文档，图片和正式介绍优先放这里" },
+        { name: "AI索引", purpose: "AI 默认读取的高信号项目卡片，控制篇幅，链接到主体文档和原始资料" },
+        { name: "原始资料", purpose: "备份用户原始输入、文件摘录和图片，便于追溯来源" },
+        { name: "设计策略", purpose: "设计目标、原则、策略和评估方式；有设计资料时才创建" },
+        { name: "AI分享", purpose: "AI 工作流、提示词、案例复盘；默认单文档，不创建 _AI索引 或 原始资料" },
+        { name: "Skill教程", purpose: "skill、教程、操作步骤；默认单文档，不创建 _AI索引 或 原始资料" },
+        { name: "文章", purpose: "文章草稿、观点和发布素材；默认单文档，不创建 _AI索引 或 原始资料" },
       ],
     };
   }
@@ -526,14 +502,26 @@ export class VaultService {
 
   async recommendNoteStrategy(input: NoteStrategyInput): Promise<NoteStrategyReport> {
     const text = `${input.title ?? ""}\n${input.content ?? ""}`.trim();
+    const category = parseKnowledgeCategory(input.category);
     const hasProcessWords = /(步骤|流程|方法|复盘|prompt|提示词|工作流|规则|模板|checklist|技能|教程)/i.test(text);
     const hasUserFacingWords = /(用户|产品|功能|优势|定位|画像|设计|策略|规范|案例|文章|分享)/i.test(text);
     const hasMixedSignals = hasProcessWords && hasUserFacingWords;
 
+    if (category && isSingleDocumentCategory(category)) {
+      return {
+        mode: "shared_note",
+        reason: "这类内容属于非项目资料，默认按单文档保存，不额外生成 _AI索引、原始资料或 AI 附录。",
+        suggestedSections: ["摘要", "正文", "链接/素材"],
+        canonicalPath: inferCanonicalPath(category, text),
+        aiReadable: false,
+        humanReadable: true,
+      };
+    }
+
     if (hasMixedSignals) {
       return {
         mode: "split_notes",
-        reason: "这条内容同时包含面向用户阅读的知识和面向 AI 复用的方法/流程，建议拆成主文档 + 辅助说明。",
+        reason: "这条项目相关内容同时包含面向用户阅读的知识和面向 AI 复用的方法/流程，可在用户确认后拆成主文档 + 辅助说明。",
         suggestedSections: ["核心结论/正文", "AI 使用说明", "来源与链接"],
         canonicalPath: inferCanonicalPath(input.category, text),
         draftPath: inferDraftPath(input.category, text),
@@ -565,12 +553,12 @@ export class VaultService {
 
   async planNoteWrite(input: NotePlanInput): Promise<NotePlanReport> {
     const vault = await this.detectObsidianVault();
+    const classification = classifyKnowledgeContent(`${input.title ?? ""}\n${input.content ?? ""}`);
     const strategy = await this.recommendNoteStrategy({
       title: input.title,
       content: input.content,
-      category: input.category,
+      category: input.category ?? classification.category,
     });
-    const classification = classifyKnowledgeContent(`${input.title ?? ""}\n${input.content ?? ""}`);
     const graphFriendly = vault.isObsidianVault;
     const recommendations = [
       ...vault.recommendations,
@@ -690,7 +678,7 @@ export class VaultService {
       },
       graphLinks: [appendixLink, mainLink],
       recommendations: [
-        "已按一套主知识库 + AI 附录写入，不会生成两套完整知识库。",
+        "已按一套主知识库 + AI 附录写入，不会生成两套完整知识库。非项目资料默认不建议使用本工具，除非用户明确要求拆分。",
         `主文档包含 ${appendixLink}，AI 附录包含 ${mainLink}，Obsidian 会形成双链图谱。`,
         "后续面向用户阅读时优先维护主文档；prompt、推导、流程、版本记录放入 AI 附录。",
       ],
@@ -701,7 +689,7 @@ export class VaultService {
     const projects = await this.listProjects();
     const projectOptions = projects.slice(0, 8).map((project) => ({
       label: project.name,
-      value: `${project.path}/_项目概览.md`,
+      value: project.overviewPath ?? `${project.path}/_AI索引.md`,
       description: `项目知识库${project.updatedAt ? `，最后更新 ${project.updatedAt}` : ""}`,
     }));
 
@@ -712,11 +700,10 @@ export class VaultService {
         question: "这条内容属于哪个文件？",
         style: "single_select",
         options: [
-          { label: `${project.name} — 用户画像`, value: `${project.path}/用户画像.md`, description: "用户洞察、用户痛点、使用场景" },
-          { label: `${project.name} — 产品功能`, value: `${project.path}/产品功能.md`, description: "功能描述、需求拆解、验收标准" },
-          { label: `${project.name} — 设计规范`, value: `${project.path}/设计规范.md`, description: "设计决策、交互规则、视觉规范" },
-          { label: `${project.name} — 竞品分析`, value: `${project.path}/竞品分析.md`, description: "竞品信息、差异化机会" },
-          { label: "放入收件箱", value: "00-Inbox/待整理.md", description: "先收集，后续再整理" },
+          { label: `${project.name} — 项目介绍`, value: `${project.path}/${project.name}项目介绍.md`, description: "给用户看的主体文档，图片和正式介绍放这里" },
+          { label: `${project.name} — AI索引`, value: `${project.path}/_AI索引.md`, description: "给 AI 默认读取的高信号摘要和资料入口" },
+          { label: `${project.name} — 原始资料`, value: `${project.path}/原始资料.md`, description: "用户原文、截图、图片和来源备份" },
+          { label: "放入收件箱", value: "00-收件箱/待整理.md", description: "先收集，后续再整理" },
         ],
       };
     }
@@ -727,12 +714,12 @@ export class VaultService {
       style: "single_select",
       options: [
         ...projectOptions,
-        { label: "设计知识", value: "02-Design/案例收集/待整理.md", description: "设计原则、案例、组件规范" },
-        { label: "AI 分享", value: "03-AI-Share/工作流/待整理.md", description: "AI 工作流、提示词、案例复盘" },
-        { label: "Skill/教程", value: "04-Skills-Tutorials/教程/待整理.md", description: "skill、教程、工具手册" },
-        { label: "文章写作", value: "05-Articles/草稿/待整理.md", description: "文章草稿、观点、发布素材" },
-        { label: "参考资料", value: "06-Reference/技术文档/待整理.md", description: "行业报告、技术文档、外部资料" },
-        { label: "放入收件箱", value: "00-Inbox/待整理.md", description: "先收集，后续再整理" },
+        { label: "设计知识", value: "02-设计/案例收集/待整理.md", description: "设计原则、案例、组件规范" },
+        { label: "AI 分享", value: "03-AI分享/待整理.md", description: "AI 工作流、提示词、案例复盘；默认单文档" },
+        { label: "Skill/教程", value: "04-技能教程/待整理.md", description: "skill、教程、工具手册；默认单文档" },
+        { label: "文章写作", value: "05-文章/待整理.md", description: "文章草稿、观点、发布素材；默认单文档" },
+        { label: "参考资料", value: "06-参考资料/技术文档/待整理.md", description: "行业报告、技术文档、外部资料" },
+        { label: "放入收件箱", value: "00-收件箱/待整理.md", description: "先收集，后续再整理" },
       ].slice(0, 10),
     };
   }
@@ -821,7 +808,7 @@ export class VaultService {
 
   async analyzeProject(input: AnalyzeProjectInput): Promise<{ project: ProjectSummary; files: string[]; report: string; saveChoice: UserChoicePayload }> {
     const project = await this.findProject(input.projectName);
-    const files = await this.readProjectCoreFiles(project.name, ["_项目概览.md", "用户画像.md", "竞品分析.md", "设计规范.md"]);
+    const files = await this.readProjectCoreFiles(project.name, ["_AI索引.md", `${project.name}项目介绍.md`, "原始资料.md"]);
     const angle = input.angle ?? "full";
     const report = renderProjectAnalysis(project, files, angle);
 
@@ -844,7 +831,7 @@ export class VaultService {
 
   async userAnalysis(projectName: string): Promise<{ project: ProjectSummary; sourcePath: string; content: string; choice: UserChoicePayload }> {
     const project = await this.findProject(projectName);
-    const sourcePath = `${project.path}/用户画像.md`;
+    const sourcePath = `${project.path}/_AI索引.md`;
     const content = await this.readFile(sourcePath);
     return {
       project,
@@ -866,7 +853,7 @@ export class VaultService {
 
   async designReviewContext(projectName: string): Promise<{ project: ProjectSummary; files: Array<{ path: string; content: string }>; choice: UserChoicePayload }> {
     const project = await this.findProject(projectName);
-    const files = await this.readProjectCoreFiles(project.name, ["_项目概览.md", "设计规范.md"]);
+    const files = await this.readProjectCoreFiles(project.name, ["_AI索引.md", `${project.name}项目介绍.md`]);
     return {
       project,
       files,
@@ -886,7 +873,7 @@ export class VaultService {
 
   async competitorAnalysis(projectName: string): Promise<{ project: ProjectSummary; sourcePath: string; content: string; isStale: boolean; choice: UserChoicePayload }> {
     const project = await this.findProject(projectName);
-    const sourcePath = `${project.path}/竞品分析.md`;
+    const sourcePath = `${project.path}/_AI索引.md`;
     const content = await this.readFile(sourcePath);
     const updatedAt = parseFrontmatter(content)["最后更新"];
     const isStale = updatedAt ? Date.now() - new Date(updatedAt).getTime() > 90 * 24 * 60 * 60 * 1000 : true;
@@ -913,7 +900,7 @@ export class VaultService {
     const period = input.period ?? "week";
     const files = input.projectName
       ? await this.listProjectMarkdownFiles((await this.findProject(input.projectName)).name)
-      : await this.listMarkdownFiles("01-Projects");
+      : await this.listMarkdownFiles("01-项目");
     const iterationFiles = files.filter((filePath) => filePath.includes("/迭代记录/"));
     const selected = await this.filterFilesByPeriod(iterationFiles, period);
     const snippets = await Promise.all(selected.map(async (filePath) => ({ path: filePath, content: await fs.readFile(this.resolveSafe(filePath), "utf-8") })));
@@ -921,16 +908,16 @@ export class VaultService {
 
     if (!input.save) return { period, sourceFiles: selected, content };
 
-    const savedPath = `08-Journal/${formatDate(new Date())}-${period === "week" ? "周报" : "月报"}.md`;
+    const savedPath = `08-日志/${formatDate(new Date())}-${period === "week" ? "周报" : "月报"}.md`;
     await this.storeKnowledge({ targetPath: savedPath, content, append: false, title: period === "week" ? "工作周报" : "工作月报" });
     return { period, sourceFiles: selected, content, savedPath };
   }
 
-  async search(query: string, limit = 5): Promise<SearchResult[]> {
+  async search(query: string, limit = 5, scope: "projects" | "all" = "projects"): Promise<SearchResult[]> {
     const keywords = tokenize(query);
     if (!keywords.length) return [];
 
-    const files = await this.listMarkdownFiles();
+    const files = await this.listMarkdownFiles(scope === "projects" ? "01-项目" : "");
     const results: SearchResult[] = [];
 
     for (const filePath of files) {
@@ -992,10 +979,10 @@ export class VaultService {
   }
 
   async listInbox(): Promise<{ items: InboxEntry[]; choice: UserChoicePayload }> {
-    const entries = await this.readDirectoryIfExists(this.resolveSafe("00-Inbox"));
+    const entries = await this.readDirectoryIfExists(this.resolveSafe("00-收件箱"));
     const markdownFiles = entries.filter((entry) => entry.isFile() && entry.name.endsWith(MARKDOWN_EXTENSION));
     const items = await Promise.all(markdownFiles.map(async (entry) => {
-      const filePath = `00-Inbox/${entry.name}`;
+      const filePath = `00-收件箱/${entry.name}`;
       const absolutePath = this.resolveSafe(filePath);
       const [stat, content] = await Promise.all([fs.stat(absolutePath), fs.readFile(absolutePath, "utf-8")]);
       return {
@@ -1043,10 +1030,10 @@ export class VaultService {
       if (Object.keys(frontmatter).length > 0 && (!frontmatter.tags || !frontmatter["最后更新"])) incompleteFrontmatter.push(filePath);
     }
 
-    const inboxEntries = await this.readDirectoryIfExists(this.resolveSafe("00-Inbox"));
-    const inboxItems = inboxEntries.filter((entry) => entry.isFile()).map((entry) => `00-Inbox/${entry.name}`);
+    const inboxEntries = await this.readDirectoryIfExists(this.resolveSafe("00-收件箱"));
+    const inboxItems = inboxEntries.filter((entry) => entry.isFile()).map((entry) => `00-收件箱/${entry.name}`);
     const issues: VaultHealthIssue[] = [
-      ...projectsWithoutOverview.map((filePath) => ({ type: "missing_overview" as const, path: filePath, message: "项目缺少 _项目概览.md" })),
+      ...projectsWithoutOverview.map((filePath) => ({ type: "missing_overview" as const, path: filePath, message: "项目缺少 AI索引" })),
       ...staleFiles.map((filePath) => ({ type: "stale_file" as const, path: filePath, message: `文件超过 ${staleDays} 天未更新` })),
       ...incompleteFrontmatter.map((filePath) => ({ type: "incomplete_frontmatter" as const, path: filePath, message: "frontmatter 缺少 tags 或最后更新" })),
       ...inboxItems.map((filePath) => ({ type: "inbox_item" as const, path: filePath, message: "收件箱存在未整理内容" })),
@@ -1063,7 +1050,7 @@ export class VaultService {
         question: "你想先处理哪类问题？",
         style: "single_select",
         options: [
-          { label: "补项目概览", value: "missing_overview", description: `缺失 ${projectsWithoutOverview.length} 个` },
+          { label: "补 AI索引", value: "missing_overview", description: `缺失 ${projectsWithoutOverview.length} 个` },
           { label: "处理收件箱", value: "inbox", description: `未整理 ${inboxItems.length} 条` },
           { label: "更新过时内容", value: "stale", description: `过时 ${staleFiles.length} 个` },
           { label: "稍后再说", value: "skip", description: "本次不处理" },
@@ -1189,9 +1176,13 @@ export class VaultService {
     if (input.type === "missing_overview") {
       const projectPath = input.path.replaceAll("\\", "/").replace(/\/+$/, "");
       const projectName = path.basename(projectPath);
-      const overviewPath = `${projectPath}/_项目概览.md`;
-      await this.writeIfMissing(overviewPath, renderProjectOverview({ name: projectName, type: "工作项目", status: "进行中", date: today }));
-      return { type: input.type, path: overviewPath, action: "created_overview" };
+      const introPath = `${projectPath}/${projectName}项目介绍.md`;
+      const aiIndexPath = `${projectPath}/_AI索引.md`;
+      const rawPath = `${projectPath}/原始资料.md`;
+      await this.writeIfMissing(introPath, renderProjectIntro({ name: projectName, type: "工作项目", status: "进行中", date: today }));
+      await this.writeIfMissing(aiIndexPath, renderProjectAiIndex({ name: projectName, type: "工作项目", status: "进行中", date: today }));
+      await this.writeIfMissing(rawPath, renderRawMaterialDocument(projectName, today));
+      return { type: input.type, path: aiIndexPath, action: "created_project_three_file_structure" };
     }
 
     if (input.type === "incomplete_frontmatter") {
@@ -1314,29 +1305,13 @@ export class VaultService {
 
   private defaultSplitNotePath(category: KnowledgeCategory, title: string): string {
     const fileName = sanitizePathSegment(title || "待整理");
-    if (category === "design_strategy") return `02-Design/设计策略/${fileName}.md`;
-    if (category === "design_resource") return `02-Design/案例收集/${fileName}.md`;
-    if (category === "ai_share") return `03-AI-Share/工作流/${fileName}.md`;
-    if (category === "skill_tutorial") return `04-Skills-Tutorials/教程/${fileName}.md`;
-    if (category === "article") return `05-Articles/草稿/${fileName}.md`;
-    if (category === "reference") return `06-Reference/技术文档/${fileName}.md`;
-    return `00-Inbox/${fileName}.md`;
-  }
-
-  private async writeTemplateFiles(): Promise<void> {
-    const today = formatDate(new Date());
-    await this.writeIfMissing("07-Templates/项目概览模板.md", renderProjectOverview({ name: "项目名", type: "工作项目", status: "进行中", date: today }));
-    await this.writeIfMissing("07-Templates/产品背景模板.md", renderProductKnowledgeTemplate("产品背景", ["产品背景", "业务"], today, ["为什么要做", "解决什么问题", "业务目标", "关键背景材料"]));
-    await this.writeIfMissing("07-Templates/产品功能模板.md", renderProductKnowledgeTemplate("产品功能", ["功能", "待确认"], today, ["功能说明", "核心流程", "边界条件", "验收标准"]));
-    await this.writeIfMissing("07-Templates/产品优势模板.md", renderProductKnowledgeTemplate("产品优势", ["产品优势", "待确认"], today, ["优势概述", "差异化依据", "证明材料", "适用场景"]));
-    await this.writeIfMissing("07-Templates/产品定位模板.md", renderProductKnowledgeTemplate("产品定位", ["产品定位", "待确认"], today, ["目标市场", "目标用户", "核心价值", "一句话表达"]));
-    await this.writeIfMissing("07-Templates/用户画像模板.md", renderProductKnowledgeTemplate("用户画像", ["用户画像"], today, ["用户分层", "痛点", "使用场景", "决策因素"]));
-    await this.writeIfMissing("07-Templates/竞品分析模板.md", renderProductKnowledgeTemplate("竞品分析", ["竞品"], today, ["竞品列表", "功能对比", "体验差异", "机会点"]));
-    await this.writeIfMissing("07-Templates/迭代记录模板.md", renderIteration({ date: formatMonth(new Date()), topic: "迭代主题", projectName: "项目名", today }));
-    await this.writeIfMissing("07-Templates/设计策略模板.md", renderProductKnowledgeTemplate("设计策略", ["设计方案"], today, ["设计目标", "设计原则", "策略说明", "评估方式"]));
-    await this.writeIfMissing("07-Templates/AI分享模板.md", renderProductKnowledgeTemplate("AI 分享", ["AI", "分享"], today, ["适用场景", "核心方法", "提示词/流程", "案例与复盘"]));
-    await this.writeIfMissing("07-Templates/Skill教程模板.md", renderProductKnowledgeTemplate("Skill/教程", ["skill", "教程"], today, ["用途", "触发方式", "操作步骤", "注意事项"]));
-    await this.writeIfMissing("07-Templates/文章模板.md", renderProductKnowledgeTemplate("文章", ["文章", "草稿"], today, ["核心观点", "文章大纲", "正文草稿", "发布信息"]));
+    if (category === "design_strategy") return `02-设计/设计策略/${fileName}.md`;
+    if (category === "design_resource") return `02-设计/案例收集/${fileName}.md`;
+    if (category === "ai_share") return `03-AI分享/${fileName}.md`;
+    if (category === "skill_tutorial") return `04-技能教程/${fileName}.md`;
+    if (category === "article") return `05-文章/${fileName}.md`;
+    if (category === "reference") return `06-参考资料/技术文档/${fileName}.md`;
+    return `00-收件箱/${fileName}.md`;
   }
 
   private async writeIfMissing(relativePath: string, content: string): Promise<void> {
@@ -1415,27 +1390,35 @@ export class VaultService {
 
   private async targetPathForProjectCategory(projectName: string, category: KnowledgeCategory): Promise<string> {
     const project = await this.findProject(projectName);
-    if (category === "reference") return "06-Reference/技术文档/待整理.md";
-    if (category === "ai_share") return "03-AI-Share/工作流/待整理.md";
-    if (category === "skill_tutorial") return "04-Skills-Tutorials/教程/待整理.md";
-    if (category === "article") return "05-Articles/草稿/待整理.md";
-    if (category === "design_strategy") return `${project.path}/设计规范.md`;
-    if (category === "design_resource") return "02-Design/案例收集/待整理.md";
-    if (category === "product_background") return `${project.path}/产品背景.md`;
-    if (category === "product_feature") return `${project.path}/产品功能.md`;
-    if (category === "product_advantage") return `${project.path}/产品优势.md`;
-    if (category === "product_positioning") return `${project.path}/产品定位.md`;
-    if (category === "business") return `${project.path}/产品背景.md`;
-    if (category === "inbox") return "00-Inbox/待整理.md";
+    if (category === "reference") return "06-参考资料/技术文档/待整理.md";
+    if (category === "ai_share") return "03-AI分享/待整理.md";
+    if (category === "skill_tutorial") return "04-技能教程/待整理.md";
+    if (category === "article") return "05-文章/待整理.md";
+    if (category === "design_strategy") return `${project.path}/_AI索引.md`;
+    if (category === "design_resource") return "02-设计/案例收集/待整理.md";
+    if (category === "product_background") return `${project.path}/_AI索引.md`;
+    if (category === "product_feature") return `${project.path}/_AI索引.md`;
+    if (category === "product_advantage") return `${project.path}/_AI索引.md`;
+    if (category === "product_positioning") return `${project.path}/_AI索引.md`;
+    if (category === "business") return `${project.path}/_AI索引.md`;
+    if (category === "inbox") return "00-收件箱/待整理.md";
     if (category === "iteration") return `${project.path}/迭代记录/${formatMonth(new Date())}-待整理.md`;
-    if (category === "user_insight") return `${project.path}/用户画像.md`;
-    if (category === "competitor") return `${project.path}/竞品分析.md`;
+    if (category === "user_insight") return `${project.path}/_AI索引.md`;
+    if (category === "competitor") return `${project.path}/_AI索引.md`;
     throw new Error(`不支持的知识分类：${category satisfies never}`);
   }
 }
 
-function renderProjectOverview(input: { name: string; type: string; status: string; date: string }): string {
-  return `---\ntags: [项目, 进行中]\n创建时间: ${input.date}\n最后更新: ${input.date}\n项目状态: ${input.status}\n项目类型: ${input.type}\n---\n\n# ${input.name} — 项目概览\n\n## 一句话定位\n（用一句话说清楚这个产品是什么）\n\n## 产品背景\n（为什么要做这个产品，解决什么问题）\n\n## 核心功能\n- 功能1：\n- 功能2：\n- 功能3：\n\n## 产品优势\n（相比竞品的差异化优势）\n\n## 目标用户\n- 主要用户群：\n- 用户痛点：\n- 使用场景：\n\n## 产品定位\n（市场定位，目标人群画像一句话概括）\n\n## 当前阶段\n（现在处于什么阶段，最近在做什么）\n\n## 相关文件\n- [[产品功能]]\n- [[用户画像]]\n- [[竞品分析]]\n- [[设计规范]]\n\n## AI 工作注意事项\n- \n`;
+function renderProjectIntro(input: { name: string; type: string; status: string; date: string }): string {
+  return `---\ntags: [项目介绍, 用户可读, 项目]\n创建时间: ${input.date}\n最后更新: ${input.date}\n项目状态: ${input.status}\n项目类型: ${input.type}\n---\n\n# ${input.name}项目介绍\n\n> 关联资料：[[01-项目/${input.name}/_AI索引|_AI索引]] / [[01-项目/${input.name}/原始资料|原始资料]]\n\n## 产品简介\n\n（面向用户阅读的项目介绍。把 AI 整理后的背景、定位、功能、优势合成一份顺畅文档。）\n\n## 核心亮点\n\n- \n\n## 适用场景\n\n- \n\n## 价值总结\n\n（补充项目的核心价值。）\n`;
+}
+
+function renderProjectAiIndex(input: { name: string; type: string; status: string; date: string }): string {
+  return `---\ntags: [AI索引, 项目]\n创建时间: ${input.date}\n最后更新: ${input.date}\n项目状态: ${input.status}\n项目类型: ${input.type}\n---\n\n# _AI索引\n\n> 主体文档：[[01-项目/${input.name}/${input.name}项目介绍|${input.name}项目介绍]]\n> 原始资料：[[01-项目/${input.name}/原始资料|原始资料]]\n\n## 项目一句话\n\n（控制在一句话内，说明项目是什么。）\n\n## AI默认上下文\n\n- 产品类型：\n- 目标场景：\n- 核心用户：\n- 核心价值：\n- 当前资料状态：\n\n## 核心能力速览\n\n- \n\n## 关键词\n\n（用顿号分隔关键词。）\n\n## 使用规则\n\n- 一般回答项目背景时，优先读本文件。\n- 写正式介绍、页面文案、汇报材料时，再读 [[01-项目/${input.name}/${input.name}项目介绍|${input.name}项目介绍]]。\n- 核对原始措辞或查看图片上下文时，再读 [[01-项目/${input.name}/原始资料|原始资料]]。\n- 做交互、视觉或页面分析时，本文件只作为背景，不默认读取原始资料。\n`;
+}
+
+function renderRawMaterialDocument(projectName: string, date: string): string {
+  return `---\ntags: [原始资料, 项目]\n创建时间: ${date}\n最后更新: ${date}\n---\n\n# 原始资料\n\n> 主体文档：[[01-项目/${projectName}/${projectName}项目介绍|${projectName}项目介绍]]\n> AI索引：[[01-项目/${projectName}/_AI索引|_AI索引]]\n\n（保留用户原始输入、文件摘录、截图和图片链接。不要在这里做过度改写。）\n`;
 }
 
 function renderBasicDocument(title: string, tags: string[], date: string): string {
@@ -1494,7 +1477,7 @@ function renderComparisonReport(dimension: string, projects: Array<{ project: Pr
 
 function renderProjectAnalysis(project: ProjectSummary, files: Array<{ path: string; content: string }>, angle: string): string {
   const merged = files.map((file) => `### 来源：${file.path}\n${file.content}`).join("\n\n");
-  return `## ${project.name} 项目诊断\n\n**分析角度：** ${angle}\n\n## 诊断结论\n（基于知识库内容生成，若资料缺失请先补充）\n\n## 主要问题\n1. 待结合下方资料判断\n\n## 建议行动\n1. 优先完善 _项目概览.md 中缺失字段\n2. 对用户画像、竞品分析、设计规范进行交叉校验\n\n## 知识库资料\n\n${truncate(merged, 4000)}\n`;
+  return `## ${project.name} 项目诊断\n\n**分析角度：** ${angle}\n\n## 诊断结论\n（基于知识库内容生成，若资料缺失请先补充）\n\n## 主要问题\n1. 待结合下方资料判断\n\n## 建议行动\n1. 优先完善 _AI索引.md 中缺失字段\n2. 需要用户可读输出时维护项目介绍；需要核对原话时查看原始资料\n\n## 知识库资料\n\n${truncate(merged, 4000)}\n`;
 }
 
 function renderBrief(period: string, snippets: Array<{ path: string; content: string }>): string {
@@ -1599,23 +1582,27 @@ function parseKnowledgeCategory(value: string | undefined): KnowledgeCategory | 
   return KNOWLEDGE_CATEGORY_VALUES.find((category) => category === value);
 }
 
+function isSingleDocumentCategory(category: KnowledgeCategory): boolean {
+  return category === "ai_share" || category === "skill_tutorial" || category === "article";
+}
+
 function targetPathForGlobalCategory(category: KnowledgeCategory): string {
   const targets: Record<KnowledgeCategory, string> = {
-    product_background: "00-Inbox/待整理.md",
-    product_feature: "00-Inbox/待整理.md",
-    product_advantage: "00-Inbox/待整理.md",
-    product_positioning: "00-Inbox/待整理.md",
-    user_insight: "00-Inbox/待整理.md",
-    business: "00-Inbox/待整理.md",
-    design_strategy: "02-Design/设计策略/待整理.md",
-    design_resource: "02-Design/案例收集/待整理.md",
-    ai_share: "03-AI-Share/工作流/待整理.md",
-    skill_tutorial: "04-Skills-Tutorials/教程/待整理.md",
-    article: "05-Articles/草稿/待整理.md",
-    competitor: "06-Reference/行业报告/竞品待整理.md",
-    iteration: "00-Inbox/待整理.md",
-    reference: "06-Reference/技术文档/待整理.md",
-    inbox: "00-Inbox/待整理.md",
+    product_background: "00-收件箱/待整理.md",
+    product_feature: "00-收件箱/待整理.md",
+    product_advantage: "00-收件箱/待整理.md",
+    product_positioning: "00-收件箱/待整理.md",
+    user_insight: "00-收件箱/待整理.md",
+    business: "00-收件箱/待整理.md",
+    design_strategy: "02-设计/设计策略/待整理.md",
+    design_resource: "02-设计/案例收集/待整理.md",
+    ai_share: "03-AI分享/待整理.md",
+    skill_tutorial: "04-技能教程/待整理.md",
+    article: "05-文章/待整理.md",
+    competitor: "06-参考资料/行业报告/竞品待整理.md",
+    iteration: "00-收件箱/待整理.md",
+    reference: "06-参考资料/技术文档/待整理.md",
+    inbox: "00-收件箱/待整理.md",
   };
   return targets[category];
 }
@@ -1707,67 +1694,67 @@ function ensureFrontmatter(content: string, defaults: Record<string, string | st
 }
 
 function tagsForPath(filePath: string): string[] {
+  if (filePath.includes("_AI索引")) return ["AI索引", "项目"];
+  if (filePath.includes("原始资料")) return ["原始资料", "项目"];
+  if (filePath.includes("项目介绍")) return ["项目介绍", "用户可读"];
   if (filePath.includes("/产品背景")) return ["产品背景", "业务"];
   if (filePath.includes("/用户画像")) return ["用户画像", "待确认"];
   if (filePath.includes("/产品功能")) return ["功能", "待确认"];
   if (filePath.includes("/产品优势")) return ["产品优势", "待确认"];
   if (filePath.includes("/产品定位")) return ["产品定位", "待确认"];
-  if (filePath.includes("/设计规范") || filePath.includes("/02-Design/")) return ["设计方案", "待确认"];
+  if (filePath.includes("/设计规范") || filePath.includes("/02-设计/")) return ["设计方案", "待确认"];
   if (filePath.includes("/竞品分析")) return ["竞品", "待确认"];
   if (filePath.includes("/迭代记录/")) return ["迭代记录", "项目"];
-  if (filePath.includes("/03-AI-Share/")) return ["AI", "分享"];
-  if (filePath.includes("/04-Skills-Tutorials/")) return ["skill", "教程"];
-  if (filePath.includes("/05-Articles/")) return ["文章", "草稿"];
-  if (filePath.includes("/06-Reference/")) return ["参考"];
-  if (filePath.includes("/00-Inbox/")) return ["待整理"];
+  if (filePath.includes("/03-AI分享/")) return ["AI", "分享"];
+  if (filePath.includes("/04-技能教程/")) return ["skill", "教程"];
+  if (filePath.includes("/05-文章/")) return ["文章", "草稿"];
+  if (filePath.includes("/06-参考资料/")) return ["参考"];
+  if (filePath.includes("/00-收件箱/")) return ["待整理"];
   return ["知识条目"];
 }
 
 function inferCanonicalPath(category: string | undefined, text: string): string | undefined {
   switch (category) {
     case "product_background":
-      return "01-Projects/项目名/产品背景.md";
     case "product_feature":
-      return "01-Projects/项目名/产品功能.md";
     case "product_advantage":
-      return "01-Projects/项目名/产品优势.md";
     case "product_positioning":
-      return "01-Projects/项目名/产品定位.md";
+      return "01-项目/项目名/_AI索引.md";
     case "design_strategy":
-      return "01-Projects/项目名/设计策略.md";
+      return "01-项目/项目名/_AI索引.md";
     case "design_resource":
-      return "02-Design/案例收集/待整理.md";
+      return "02-设计/案例收集/待整理.md";
     case "ai_share":
-      return "03-AI-Share/工作流/待整理.md";
+      return "03-AI分享/待整理.md";
     case "skill_tutorial":
-      return "04-Skills-Tutorials/教程/待整理.md";
+      return "04-技能教程/待整理.md";
     case "article":
-      return "05-Articles/草稿/待整理.md";
+      return "05-文章/待整理.md";
     case "reference":
-      return "06-Reference/技术文档/待整理.md";
+      return "06-参考资料/技术文档/待整理.md";
     default:
-      if (/(设计策略|设计原则|策略)/.test(text)) return "01-Projects/项目名/设计策略.md";
-      if (/(AI|提示词|工作流)/i.test(text)) return "03-AI-Share/工作流/待整理.md";
-      if (/(教程|skill|技能)/i.test(text)) return "04-Skills-Tutorials/教程/待整理.md";
-      if (/(文章|草稿|观点)/.test(text)) return "05-Articles/草稿/待整理.md";
+      if (/(设计策略|设计原则|策略)/.test(text)) return "01-项目/项目名/设计策略.md";
+      if (/(AI|提示词|工作流)/i.test(text)) return "03-AI分享/待整理.md";
+      if (/(教程|skill|技能)/i.test(text)) return "04-技能教程/待整理.md";
+      if (/(文章|草稿|观点)/.test(text)) return "05-文章/待整理.md";
       return undefined;
   }
 }
 
 function inferDraftPath(category: string | undefined, text: string): string | undefined {
   if (category === "product_background" || category === "product_feature" || category === "product_advantage" || category === "product_positioning") {
-    return "00-Inbox/待整理.md";
+    return "00-收件箱/待整理.md";
   }
-  if (category === "design_strategy") return "02-Design/设计策略/待整理.md";
-  if (category === "ai_share") return "03-AI-Share/工作流/待整理.md";
-  if (category === "skill_tutorial") return "04-Skills-Tutorials/教程/待整理.md";
-  if (category === "article") return "05-Articles/草稿/待整理.md";
-  if (category === "reference") return "06-Reference/技术文档/待整理.md";
-  if (/(设计策略|设计原则|策略)/.test(text)) return "02-Design/设计策略/待整理.md";
-  if (/(AI|提示词|工作流)/i.test(text)) return "03-AI-Share/工作流/待整理.md";
-  if (/(教程|skill|技能)/i.test(text)) return "04-Skills-Tutorials/教程/待整理.md";
-  if (/(文章|草稿|观点)/.test(text)) return "05-Articles/草稿/待整理.md";
-  return "00-Inbox/待整理.md";
+  if (category === "design_strategy") return "02-设计/设计策略/待整理.md";
+  if (category === "ai_share") return "03-AI分享/待整理.md";
+  if (category === "skill_tutorial") return "04-技能教程/待整理.md";
+  if (category === "article") return "05-文章/待整理.md";
+  if (category === "reference") return "06-参考资料/技术文档/待整理.md";
+  if (/(设计策略|设计原则|策略)/.test(text)) return "02-设计/设计策略/待整理.md";
+  if (/(AI|提示词|工作流)/i.test(text)) return "03-AI分享/待整理.md";
+  if (/(教程|skill|技能)/i.test(text)) return "04-技能教程/待整理.md";
+  if (/(文章|草稿|观点)/.test(text)) return "05-文章/待整理.md";
+  return "00-收件箱/待整理.md";
 }
 
 function hashManifest(manifest: Record<string, unknown>): string {
