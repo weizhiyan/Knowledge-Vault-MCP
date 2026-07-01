@@ -1,7 +1,7 @@
 {
   "name": "obsidian-knowledge-mcp",
   "version": "0.2.0",
-  "description": "Local MCP server for an Obsidian work knowledge vault and AgentShell config injection.",
+  "description": "Local MCP server for a Markdown work knowledge vault with Obsidian-compatible viewing and AgentShell config injection.",
   "type": "module",
   "bin": {
     "obsidian-knowledge-mcp": "dist/index.js"

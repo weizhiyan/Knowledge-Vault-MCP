@@ -1,72 +1,241 @@
-# Obsidian-MCP
+# Knowledge Vault MCP
 
 当前版本：`0.2.0`
 
-Obsidian-MCP 是一个面向工作知识库的本地 MCP 服务。它把 Markdown 文件夹当作长期知识库管理，帮助 AI agent 稳定地创建、读取、分类、编辑和维护知识文档；如果同一个文件夹被 Obsidian 打开，它也可以自然获得双链和图谱能力。
+一个面向 AI agent 的本地 Markdown 工作知识库 MCP。它负责把零散资料整理成稳定的知识库结构，让 Codex、Claude Code 或其他支持 MCP 的 agent 可以安全地读取、分类、写入、编辑和维护 Markdown 文档。
 
-这个项目的定位不是替代 Obsidian，也不是做某个 AI 软件的专属 UI。它负责提供一套通用的知识库能力协议：Markdown 文件怎么组织、AI 怎么定位上下文、内容怎么安全写入、附件怎么嵌入、未来 UI 怎么接入选区编辑。
+Obsidian 在这里不是核心依赖，而是可选查看器：同一个 Markdown 文件夹可以用 Obsidian 打开，用来浏览双链、图谱和附件。
+
+## 这是什么
+
+| 定位 | 说明 |
+| --- | --- |
+| 本质 | Markdown 工作知识库 MCP |
+| 服务对象 | AI agent + 用户共同维护的长期资料库 |
+| 存储方式 | 本地文件夹 + Markdown |
+| Obsidian 角色 | 可选阅读层，用来看双链、图谱、附件 |
+| 不做什么 | 不做 Obsidian 插件，不绑定某个 AI 软件 UI，不实现专属编辑面板 |
 
 ## 解决什么
 
-| 问题 | 解决方式 |
-| --- | --- |
-| AI 写知识库容易散、乱、层次不齐 | 内置分类、项目三件套、写入策略和结构化模板 |
-| 用户和 AI 看同一份资料时容易互相干扰 | 主文档给人和 AI 共用，复杂过程才拆 AI 附录 |
-| 项目资料越积越多，AI 读取上下文太重 | 项目默认读取 `AI索引.md`，需要时再追溯项目介绍和原始资料 |
-| 没有 Obsidian 时知识库无法工作 | 普通 Markdown 文件夹也能完整运行 |
-| 有 Obsidian 时希望能看双链和图谱 | 使用标准 Markdown 与 Obsidian 双链，文件夹可直接作为 Vault 打开 |
-| 图片、截图、PDF 不好管理 | 统一复制到项目 `attachments/`，并继续嵌入 Markdown |
-| 未来想做一个 MD 编辑 UI | 提供文档浏览、引用状态、选区编辑、diff 预览、确认写回接口 |
+| 场景 | 过去的问题 | 现在的处理 |
+| --- | --- | --- |
+| 项目知识沉淀 | 背景、功能、定位、用户资料容易散落 | 用项目三件套固定结构 |
+| AI 读取上下文 | 一次读太多，容易噪音过大 | 默认读取高信号项目索引，需要时再追溯 |
+| 用户和 AI 共用资料 | 一份给人看，一份给 AI 看容易失控 | 一套主知识库，必要时才拆 AI 附录 |
+| 资料写入 | agent 输出层次不齐 | 用分类、模板、写入策略约束 |
+| 图片和 PDF | 附件位置混乱，不好追溯 | 统一放入项目 `attachments/`，继续嵌入 Markdown |
+| 未来编辑 UI | UI 很难跨软件统一 | MCP 只提供编辑协议，UI 单独适配 |
 
 ## 架构
 
-```text
-Codex / Claude Code / 其他 Agent
-        |
-        | MCP tools
-        v
-Obsidian-MCP
-        |
-        | Markdown read/write/edit protocol
-        v
-工作知识库文件夹
-        |
-        | optional
-        v
-Obsidian Vault / 图谱 / 双链
+```mermaid
+flowchart LR
+  Agent["Codex / Claude Code / 其他 Agent"]
+  MCP["Knowledge Vault MCP"]
+  Vault["本地 Markdown 知识库"]
+  Obsidian["Obsidian 查看层<br/>双链 / 图谱 / 附件预览"]
+  UI["未来本地 UI<br/>文档浏览 / 源码预览 / 选区编辑"]
 
-未来可选：
-本地 Web UI / 桌面 UI
-        |
-        | documents + readDocumentForUi + prepareEdit + previewEdit + applyEdit
-        v
-Obsidian-MCP
+  Agent -->|"调用 MCP 工具"| MCP
+  UI -->|"调用浏览与编辑协议"| MCP
+  MCP -->|"读 / 写 / 搜索 / 编辑 Markdown"| Vault
+  Vault -->|"同一文件夹可打开"| Obsidian
 ```
 
-### 分层说明
+### 模块关系
 
-| 层级 | 职责 | 当前状态 |
-| --- | --- | --- |
-| MCP 服务层 | 文件读写、分类、搜索、编辑协议、附件管理 | 已实现 |
-| Markdown 知识库层 | 文件夹结构、frontmatter、双链、项目三件套 | 已实现 |
-| Obsidian 查看层 | 双链、图谱、阅读体验 | 使用 Obsidian 自身能力 |
-| Agent 适配层 | Codex、Claude Code 等调用 MCP 工具 | 已支持 |
-| UI 编辑层 | 文档浏览、源码/预览 Tab、红绿 diff、高亮卡片 | 不在 MCP 内，后续可单独实现 |
+```mermaid
+flowchart TB
+  A["知识库大纲<br/>areas / templates"] --> B["分类与写入规划<br/>classify / plan"]
+  B --> C["Markdown 写入<br/>store / update / split note"]
+  C --> D["项目结构<br/>项目介绍 / AI索引 / 原始资料"]
+  D --> E["检索与上下文加载<br/>search / loadProject / sections"]
+  D --> F["附件管理<br/>attachments + Markdown embed"]
+  E --> G["AI 选区编辑协议<br/>prepare / preview / apply"]
+  F --> H["Obsidian 可视化<br/>双链 / 图谱 / 附件预览"]
+  G --> I["未来 UI 适配<br/>红绿 diff / 编辑卡片 / 引用状态"]
+```
 
 ## 核心原则
 
 | 原则 | 说明 |
 | --- | --- |
-| 一套主知识库 | 不复制两套完整内容，用户和 AI 共享同一批 Markdown |
-| 一主一辅 | 主文档放结论、结构、可读内容；只有长流程、prompt、推导才拆 AI 附录 |
-| 项目优先索引 | 项目默认读取 `AI索引.md`，避免 AI 一次吃完整个项目 |
-| Obsidian 可选 | 没有 Obsidian 就是普通文件夹，有 Obsidian 就能看双链和图谱 |
-| UI 不写死 | MCP 只提供协议，不绑定 Codex、Claude Code 或 Obsidian 的界面 |
-| 写入需确认 | 会修改文件的工具默认要求用户确认或显式参数 |
-| 附件仍嵌入 MD | 图片和 PDF 统一管理，但阅读时仍出现在 Markdown 文档里 |
-| 旧文件兼容 | 新项目使用 `AI索引.md`，旧 `_AI索引.md` 仍可读取 |
+| 一套主知识库 | 用户和 AI 共用同一批 Markdown，不复制两套完整内容 |
+| 项目资料结构化 | 工作/产品项目默认使用项目介绍、AI索引、原始资料三件套 |
+| AI 默认读高信号内容 | AI 优先读项目索引，减少噪音；需要细节时再读正文和原始资料 |
+| 非项目内容保持轻量 | 设计、AI分享、教程、文章默认单文档保存 |
+| 附件仍在正文里看 | 图片、截图、PDF 统一管理，但阅读时仍嵌入 Markdown |
+| UI 能力后置 | MCP 提供能力协议，不把界面写死在某个宿主软件里 |
+| 写入要可控 | 修改文件的工具需要明确目标、预览或确认 |
 
-## 用法
+## 知识库结构
+
+| 目录 | 内容 |
+| --- | --- |
+| `00-收件箱` | 低置信度、待整理资料 |
+| `01-项目` | 工作 / 产品 / 业务项目 |
+| `02-设计` | 设计策略、规范、案例、方法 |
+| `03-AI分享` | AI 工作流、提示词、案例复盘 |
+| `04-技能教程` | skill、教程、工具使用手册 |
+| `05-文章` | 文章草稿、观点、发布素材 |
+| `06-参考资料` | 外部资料、报告、技术文档 |
+| `08-日志` | 周报、月报、工作摘要 |
+
+### 项目三件套
+
+| 文件 | 用途 |
+| --- | --- |
+| `XXXX项目介绍.md` | 给用户和 AI 都能读的主体文档，放产品简介、功能、优势、场景、图片 |
+| `AI索引.md` | 给 AI 优先读取的项目卡片，放高信号摘要、关键词、资料入口 |
+| `原始资料.md` | 放原始输入、截图、PDF、资料摘录和来源备份 |
+
+### 一主一辅
+
+不是做两套知识库，而是：
+
+```mermaid
+flowchart LR
+  Main["主文档<br/>结论 / 结构 / 可读内容"]
+  Appendix["AI 附录<br/>资料来源 / 推导 / Prompt / 版本记录"]
+  Main <-->|"Obsidian 双链"| Appendix
+```
+
+只有内容很长、流程很多、prompt 很多、推导过程很重时，才拆 AI 附录。
+
+## 附件规则
+
+项目附件统一放在：
+
+```text
+01-项目/项目名/attachments/
+```
+
+Markdown 中继续使用嵌入语法：
+
+```markdown
+![[attachments/homepage.png]]
+```
+
+默认规则：
+
+| 类型 | 推荐位置 |
+| --- | --- |
+| 项目截图、产品图片 | `项目介绍.md` |
+| 原始截图、资料 PDF、来源备份 | `原始资料.md` |
+| 高信号摘要 | `AI索引.md` |
+
+## 内置 Skills
+
+| Skill | 用途 | 典型触发 |
+| --- | --- | --- |
+| `kb.createProject` | 创建项目知识库三件套 | 新建项目、创建产品知识库 |
+| `kb.classifyEntry` | 判断内容应该放到哪个分类或文件 | 记录、保存到知识库、整理内容 |
+| `kb.writeStructured` | 按固定结构写入 Markdown | 补充内容、更新条目 |
+| `kb.loadContext` | 加载项目或主题上下文 | 关于某项目、读取背景 |
+| `kb.archiveInbox` | 整理收件箱内容 | 归档、清理待整理 |
+| `kb.healthCheck` | 检查知识库结构和维护状态 | 检查知识库、发现问题 |
+
+## 主要工具
+
+### 浏览与读取
+
+| 工具 | 作用 |
+| --- | --- |
+| `knowledge.outline` | 返回知识库分类大纲 |
+| `knowledge.projects` | 列出项目 |
+| `knowledge.documents` | 返回分类卡片和 Markdown 文档摘要 |
+| `knowledge.loadProject` | 读取项目 AI 索引 |
+| `knowledge.search` | 搜索知识库 |
+| `knowledge.get` | 读取完整 Markdown 文件 |
+| `knowledge.sections` | 列出文档 H2 目录 |
+| `knowledge.getSection` | 读取指定 H2 章节 |
+| `knowledge.readDocumentForUi` | 给未来 UI 返回文档内容、简化源码、附件和引用状态 |
+
+### 写入与维护
+
+| 工具 | 作用 |
+| --- | --- |
+| `knowledge.createProject` | 创建项目三件套 |
+| `knowledge.createIteration` | 创建迭代记录 |
+| `knowledge.planNoteWrite` | 写入前判断策略 |
+| `knowledge.classifyEntry` | 分类并推荐目标路径 |
+| `knowledge.store` | 创建或追加知识条目 |
+| `knowledge.update` | 追加或替换文件 |
+| `knowledge.updateSection` | 更新指定章节 |
+| `knowledge.writeSplitNote` | 创建主文档 + AI 附录 |
+| `knowledge.attachAsset` | 复制附件并插入 Markdown 嵌入链接 |
+| `knowledge.inbox` | 列出收件箱 |
+| `knowledge.archiveInbox` | 归档收件箱内容 |
+| `knowledge.healthCheck` | 检查知识库问题 |
+| `knowledge.repairHealthIssue` | 修复单个问题 |
+
+### AI 选区编辑
+
+| 工具 | 作用 | 是否写文件 |
+| --- | --- | --- |
+| `knowledge.prepareEdit` | 把选中文案或行号范围解析成编辑上下文 | 否 |
+| `knowledge.previewEdit` | 返回临时红绿 diff 数据 | 否 |
+| `knowledge.applyEdit` | 用户确认后写回 Markdown | 是 |
+
+## 未来 UI 可以接哪些接口
+
+```mermaid
+sequenceDiagram
+  participant UI as 本地 UI
+  participant MCP as Knowledge Vault MCP
+  participant MD as Markdown 文件
+
+  UI->>MCP: knowledge.documents
+  MCP-->>UI: 分类卡片 + 文档摘要
+  UI->>MCP: knowledge.readDocumentForUi(path)
+  MCP->>MD: 读取 Markdown
+  MCP-->>UI: content + displaySource + assets + documentReference
+  UI->>MCP: knowledge.prepareEdit(selectionText 或行号)
+  MCP-->>UI: 编辑卡片上下文 + contentHash
+  UI->>MCP: knowledge.previewEdit(replacement, expectedHash)
+  MCP-->>UI: diff blocks + unifiedDiff
+  UI->>MCP: knowledge.applyEdit(confirm=true)
+  MCP->>MD: 写回 Markdown
+  MCP-->>UI: newHash + updatedAt
+```
+
+| UI 功能 | 推荐接口 |
+| --- | --- |
+| 分类首页 | `knowledge.documents` |
+| 文档列表 | `knowledge.documents` |
+| 打开文档 | `knowledge.readDocumentForUi` |
+| 源码 / 预览 Tab | `content` + `displaySource` |
+| 当前文档引用状态 | `documentReference` |
+| 图片源码精简显示 | `displaySource` |
+| 复制 Markdown | `content` |
+| 下载 Markdown | `content` + `path` |
+| 打开本地位置 | `absolutePath`，由 UI 调系统能力 |
+| 选中文字编辑 | `knowledge.prepareEdit(selectionText)` |
+| 行号范围编辑 | `knowledge.prepareEdit(startLine,endLine)` |
+| 红绿 diff 预览 | `knowledge.previewEdit` |
+| 确认写回 | `knowledge.applyEdit(confirm=true)` |
+| 防止旧内容误写 | `expectedHash` |
+
+红删绿增、高亮卡片、悬浮编辑按钮、源码/预览切换，这些属于 UI 层，不属于 MCP 本身。
+
+## Obsidian 的角色
+
+```mermaid
+flowchart LR
+  Vault["Markdown 知识库"] --> Obsidian["Obsidian"]
+  Obsidian --> Graph["图谱"]
+  Obsidian --> Links["双链"]
+  Obsidian --> Preview["附件预览"]
+```
+
+这个项目不是 Obsidian 插件，也不是专门的 Obsidian MCP 连接器。更准确的说法是：
+
+> 一个兼容 Obsidian 查看体验的 Markdown 工作知识库 MCP。
+
+也就是：没有 Obsidian 也能用；有 Obsidian 时更方便查看。
+
+## 使用
 
 ```bash
 npm install
@@ -81,189 +250,7 @@ npm start
 | `OBSIDIAN_VAULT_PATH` | 知识库根目录 |
 | `WORK_VAULT_PATH` | 知识库根目录备用变量 |
 
-## 目录规则
-
-| 目录 | 用途 |
-| --- | --- |
-| `00-收件箱` | 低置信度、待整理内容 |
-| `01-项目` | 工作 / 产品知识 |
-| `02-设计` | 设计策略、规范、案例、方法 |
-| `03-AI分享` | AI 经验、工作流、提示词、复盘 |
-| `04-技能教程` | skill、教程、操作手册 |
-| `05-文章` | 文章草稿、观点、发布素材 |
-| `06-参考资料` | 外部资料、报告、技术文档 |
-| `08-日志` | 周报、月报、工作摘要 |
-
-项目知识默认用三件套：
-
-| 文件 | 面向对象 | 用途 |
-| --- | --- | --- |
-| `XXXX项目介绍.md` | 用户 + AI | 用户可读的项目主体文档，正式介绍、图片、项目说明优先放这里 |
-| `AI索引.md` | AI 优先 | 高信号项目卡片，放背景、定位、功能、用户、关键词和资料入口 |
-| `原始资料.md` | 用户 + AI | 用户原始输入、资料摘录、截图、PDF 和来源备份 |
-
-非项目内容默认单文档保存，不额外拆 `AI索引` 或 `原始资料`。
-
-## 附件规则
-
-项目附件统一放在：
-
-```text
-01-项目/项目名/attachments/
-```
-
-图片、截图和 PDF 仍然嵌入到 Markdown 中查看。默认写入 `项目介绍.md` 的“附件”章节；原始截图、资料 PDF 或来源备份可写入 `原始资料.md`。`AI索引.md` 默认只保留摘要和链接，不直接塞大图。
-
-示例：
-
-```markdown
-![[attachments/homepage.png]]
-```
-
-## 内置 Skills
-
-| Skill ID | 名称 | 触发场景 | 做什么 | 防出错规则 |
-| --- | --- | --- | --- | --- |
-| `kb.createProject` | 创建工作/产品项目知识库 | 新建项目、创建产品知识库 | 创建项目介绍、AI索引、原始资料三件套 | 不覆盖已有文件，创建前确认名称和类型 |
-| `kb.classifyEntry` | 知识条目分类归档 | 记录、保存到知识库、整理内容 | 判断内容属于项目、设计、AI分享、教程、文章或参考资料 | 低置信度进收件箱，写入前返回选择 |
-| `kb.writeStructured` | 结构化写入 | 补充内容、更新条目 | 按目标文件模板组织标题、摘要、正文、来源、链接 | 优先更新 H2 章节，保留原结构 |
-| `kb.loadContext` | 加载项目/主题背景 | 关于某项目、读取背景 | 项目优先加载 `AI索引.md`，非项目只读指定文档 | 不一次读取整个 vault，长文档先列目录 |
-| `kb.archiveInbox` | 收件箱整理 | 整理收件箱、归档 | 逐条分类后移动或追加到目标文件 | 逐条确认，允许跳过，不自动删除未确认内容 |
-| `kb.healthCheck` | 知识库健康检查 | 检查知识库、发现问题 | 检查缺失索引、过期文件、frontmatter、收件箱和连接器状态 | 只报告问题，修复需单独确认 |
-
-## 主要工具
-
-### 知识库浏览与读取
-
-| 工具 | 用途 |
-| --- | --- |
-| `knowledge.outline` | 返回知识库分类大纲和模板说明 |
-| `knowledge.projects` | 列出 `01-项目` 下的项目 |
-| `knowledge.documents` | 返回分类卡片和 Markdown 文档摘要，供 UI 或 agent 浏览 |
-| `knowledge.loadProject` | 读取项目 `AI索引.md` 作为高信号上下文 |
-| `knowledge.search` | 搜索文件名、标题、标签、frontmatter 和内容，默认只搜项目 |
-| `knowledge.get` | 读取一个 Markdown 文件 |
-| `knowledge.getSection` | 按 H2 标题读取一个章节 |
-| `knowledge.sections` | 列出一个文件的 H2 目录和短摘录 |
-| `knowledge.readDocumentForUi` | 为未来 UI 返回源码、简化源码、附件、标题、引用状态 |
-
-### 知识库写入与维护
-
-| 工具 | 用途 |
-| --- | --- |
-| `knowledge.createProject` | 创建项目三件套 |
-| `knowledge.createIteration` | 创建项目迭代记录 |
-| `knowledge.planNoteWrite` | 写入前判断 direct / ask_user / split_write |
-| `knowledge.classifyEntry` | 给知识条目分类并推荐目标路径 |
-| `knowledge.store` | 创建或追加知识条目 |
-| `knowledge.update` | 追加或替换一个 Markdown 文件 |
-| `knowledge.updateSection` | 替换、追加或前置写入某个 H2 章节 |
-| `knowledge.writeSplitNote` | 写“一主一辅”，自动建立双链 |
-| `knowledge.attachAsset` | 复制图片/PDF到项目 `attachments/` 并插入 Markdown 嵌入链接 |
-| `knowledge.inbox` | 列出收件箱待整理内容 |
-| `knowledge.archiveInbox` | 把收件箱内容归档到目标文件 |
-| `knowledge.healthCheck` | 检查知识库结构和更新状态 |
-| `knowledge.repairHealthIssue` | 修复单个健康检查问题 |
-
-### AI 选区编辑协议
-
-| 工具 | 用途 | 是否写文件 |
-| --- | --- | --- |
-| `knowledge.prepareEdit` | 把选中文案或行号范围解析成 AI 编辑上下文卡片 | 否 |
-| `knowledge.previewEdit` | 预览替换结果，返回临时红绿 diff 数据 | 否 |
-| `knowledge.applyEdit` | 用户确认后写回 Markdown | 是 |
-
-### Obsidian 与 AgentShell
-
-| 工具 | 用途 |
-| --- | --- |
-| `knowledge.detectObsidianVault` | 检测当前文件夹是否是 Obsidian Vault |
-| `knowledge.recommendObsidianConnector` | 推荐使用现成 Obsidian MCP/REST 连接器 |
-| `knowledge.checkObsidianConnector` | 检测 Obsidian 连接器版本漂移和兼容性 |
-| `knowledge.setObsidianConnectorSnapshot` | 保存连接器版本快照 |
-| `agentshell.injectConfig` | 向 `CLAUDE.md` / `AGENTS.md` 注入 AgentShell Profile |
-
-## 编辑协议
-
-MCP 不实现专属面板，只提供编辑协议。未来 UI 可以按下面流程接入：
-
-```text
-knowledge.documents
-  -> 展示分类卡片和文档列表
-
-knowledge.readDocumentForUi
-  -> 打开文档
-  -> 显示源码 / 预览
-  -> 显示“当前引用文档”
-  -> 解析 Markdown 图片和附件
-
-用户在源码模式选中一段文字
-  -> knowledge.prepareEdit
-  -> 生成 AI 编辑上下文卡片
-
-AI 生成替换内容
-  -> knowledge.previewEdit
-  -> 返回 removed / added / context diff blocks
-
-用户确认
-  -> knowledge.applyEdit(confirm=true)
-  -> 写回 Markdown
-```
-
-### UI 可用接口
-
-| UI 功能 | MCP 接口 | 返回/要求 |
-| --- | --- | --- |
-| 分类首页卡片 | `knowledge.documents` | `areas[].name/root/documentCount` |
-| 文档列表 | `knowledge.documents` | `documents[].path/title/tags/headings/excerpt/updatedAt` |
-| 打开文档 | `knowledge.readDocumentForUi` | `content`、`displaySource`、`headings`、`assets` |
-| 当前引用状态 | `knowledge.readDocumentForUi` | `documentReference.active/path/title` |
-| 图片源码精简 | `knowledge.readDocumentForUi` | `displaySource` 中把图片变成 `[图片: xxx.png]` |
-| 打开本地位置 | `knowledge.readDocumentForUi(includeAbsolutePath=true)` | `absolutePath`，由 UI 调系统能力 |
-| 选中文字编辑 | `knowledge.prepareEdit(selectionText)` | `selectionText`、行号、上下文、`contentHash` |
-| 行号范围编辑 | `knowledge.prepareEdit(startLine,endLine)` | 同上 |
-| 重复选区定位 | `knowledge.prepareEdit(occurrence)` | `occurrenceCount` 和目标 occurrence |
-| 红绿 diff 预览 | `knowledge.previewEdit` | `diff[]` 和 `unifiedDiff` |
-| 确认写回 | `knowledge.applyEdit(confirm=true)` | 新旧 hash、diff、更新时间 |
-| 防止误写 | `expectedHash` | 文档变化时阻止预览或写回 |
-
-红删绿增的高亮是 UI 临时状态，不写入 Markdown；切换文档或发起下一次编辑时可以直接清除。
-
-## 写入规则
-
-| 策略 | 说明 |
-| --- | --- |
-| `direct_write` | 内容明确且风险低，直接写入建议目标 |
-| `ask_user` | 分类或目标不确定，先让用户选位置 |
-| `split_write` | 只在项目资料复杂、流程很多、prompt 很多或用户明确要求时拆“一主一辅” |
-
-`knowledge.writeSplitNote` 会自动创建：
-
-| 文件 | 内容 |
-| --- | --- |
-| 主文档 | 结论、结构、可扫描内容 |
-| AI 附录 | 资料来源、推导过程、提示词、版本记录 |
-
-两者会自动写入 `[[主文档]]` 与 `[[AI 附录]]` 双链。
-
-## Obsidian 关系
-
-这个 MCP 不依赖 Obsidian 才能运行：
-
-| 情况 | 行为 |
-| --- | --- |
-| 没有 Obsidian | 按普通文件夹 + Markdown 工作 |
-| 有 Obsidian | 同一个文件夹可作为 Vault 打开，查看双链、图谱和附件 |
-| 有 Obsidian 连接器 | 可以通过现成 Obsidian MCP/REST 插件桥接，不重复造连接器 |
-
-## 开发
-
-```bash
-npm run typecheck
-npm run build
-```
-
-发布前建议至少跑：
+## 开发验证
 
 ```bash
 npm run typecheck
