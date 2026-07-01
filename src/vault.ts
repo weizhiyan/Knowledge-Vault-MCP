@@ -47,6 +47,8 @@ const KNOWLEDGE_AREAS = [
   },
 ] as const;
 
+export type KnowledgeAreaId = typeof KNOWLEDGE_AREAS[number]["id"];
+
 const BUILT_IN_SKILLS = [
   {
     id: "kb.createProject",
@@ -283,6 +285,123 @@ export interface AttachAssetReport {
   recommendations: string[];
 }
 
+export interface ListDocumentsInput {
+  area?: KnowledgeAreaId | "all";
+  limit?: number;
+}
+
+export interface KnowledgeAreaSummary {
+  id: KnowledgeAreaId;
+  name: string;
+  root: string;
+  description: string;
+  documentCount: number;
+}
+
+export interface KnowledgeDocumentSummary {
+  path: string;
+  title: string;
+  area?: KnowledgeAreaId;
+  areaName?: string;
+  tags: string[];
+  headings: string[];
+  excerpt: string;
+  updatedAt?: string;
+}
+
+export interface DocumentBrowserReport {
+  areas: KnowledgeAreaSummary[];
+  documents: KnowledgeDocumentSummary[];
+}
+
+export interface ReadDocumentForUiInput {
+  path: string;
+  simplifyImages?: boolean;
+  includeAbsolutePath?: boolean;
+}
+
+export interface MarkdownAssetReference {
+  markdown: string;
+  target: string;
+  kind: "image" | "pdf" | "file";
+  vaultPath: string;
+  absolutePath: string;
+  exists: boolean;
+}
+
+export interface ReadDocumentForUiReport {
+  path: string;
+  absolutePath?: string;
+  title: string;
+  content: string;
+  displaySource: string;
+  frontmatter: Record<string, string>;
+  headings: string[];
+  assets: MarkdownAssetReference[];
+  documentReference: {
+    path: string;
+    title: string;
+    active: true;
+    purpose: "allow_ai_read_and_edit";
+  };
+}
+
+export interface PrepareEditInput {
+  path: string;
+  selectionText?: string;
+  startLine?: number;
+  endLine?: number;
+  occurrence?: number;
+  contextLines?: number;
+}
+
+export interface EditSelectionContext {
+  path: string;
+  title: string;
+  contentHash: string;
+  selectionText: string;
+  startLine: number;
+  endLine: number;
+  occurrence: number;
+  occurrenceCount: number;
+  beforeContext: string;
+  afterContext: string;
+}
+
+export interface EditDiffBlock {
+  type: "context" | "removed" | "added";
+  lines: string[];
+}
+
+export interface PreviewEditInput extends PrepareEditInput {
+  replacement: string;
+  expectedHash?: string;
+}
+
+export interface PreviewEditReport {
+  selection: EditSelectionContext;
+  replacement: string;
+  diff: EditDiffBlock[];
+  unifiedDiff: string;
+  canApply: boolean;
+  recommendations: string[];
+}
+
+export interface ApplyEditInput extends PreviewEditInput {
+  confirm?: boolean;
+}
+
+export interface ApplyEditReport {
+  path: string;
+  title: string;
+  updatedAt: string;
+  oldHash: string;
+  newHash: string;
+  selection: EditSelectionContext;
+  diff: EditDiffBlock[];
+  unifiedDiff: string;
+}
+
 export interface ConnectorStatusInput {
   manifestPath?: string;
   connectorId?: string;
@@ -482,6 +601,105 @@ export class VaultService {
         { name: "Skill教程", purpose: "skill、教程、操作步骤；默认单文档，不创建 AI索引 或 原始资料" },
         { name: "文章", purpose: "文章草稿、观点和发布素材；默认单文档，不创建 AI索引 或 原始资料" },
       ],
+    };
+  }
+
+  async listDocuments(input: ListDocumentsInput = {}): Promise<DocumentBrowserReport> {
+    const selectedArea = input.area ?? "all";
+    const limit = input.limit ?? 80;
+    const areasWithCounts = await Promise.all(KNOWLEDGE_AREAS.map(async (area): Promise<KnowledgeAreaSummary> => ({
+      id: area.id,
+      name: area.name,
+      root: area.root,
+      description: area.description,
+      documentCount: (await this.listMarkdownFiles(area.root)).length,
+    })));
+    const roots: string[] = selectedArea === "all"
+      ? KNOWLEDGE_AREAS.map((area) => area.root)
+      : [KNOWLEDGE_AREAS.find((area) => area.id === selectedArea)?.root].filter((root): root is NonNullable<typeof root> => Boolean(root));
+    const filePaths = [...new Set((await Promise.all(roots.map((root) => this.listMarkdownFiles(root)))).flat())];
+    const documents = await Promise.all(filePaths.map((filePath) => this.documentSummary(filePath)));
+
+    return {
+      areas: areasWithCounts,
+      documents: documents
+        .sort((left, right) => (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "") || left.path.localeCompare(right.path))
+        .slice(0, limit),
+    };
+  }
+
+  async readDocumentForUi(input: ReadDocumentForUiInput): Promise<ReadDocumentForUiReport> {
+    const targetPath = normalizeMarkdownPath(input.path);
+    const absolutePath = this.resolveSafe(targetPath);
+    const content = await fs.readFile(absolutePath, "utf-8");
+    const title = extractTitle(content) ?? path.posix.basename(targetPath, MARKDOWN_EXTENSION);
+    const frontmatter = parseFrontmatter(content);
+
+    return {
+      path: targetPath,
+      absolutePath: input.includeAbsolutePath ? absolutePath : undefined,
+      title,
+      content,
+      displaySource: input.simplifyImages === false ? content : simplifyMarkdownAssetSyntax(content),
+      frontmatter,
+      headings: extractMarkdownSections(content).map((section) => section.heading),
+      assets: await this.extractAssetReferences(targetPath, content),
+      documentReference: {
+        path: targetPath,
+        title,
+        active: true,
+        purpose: "allow_ai_read_and_edit",
+      },
+    };
+  }
+
+  async prepareEdit(input: PrepareEditInput): Promise<EditSelectionContext> {
+    const resolved = await this.resolveEditSelection(input);
+    return resolved.selection;
+  }
+
+  async previewEdit(input: PreviewEditInput): Promise<PreviewEditReport> {
+    const resolved = await this.resolveEditSelection(input);
+    if (input.expectedHash && input.expectedHash !== resolved.selection.contentHash) {
+      throw new Error("文档内容已变化，预览所基于的 expectedHash 不匹配。请重新读取文档后再编辑。");
+    }
+
+    const diff = buildLineDiff(resolved.selection.selectionText, input.replacement);
+    return {
+      selection: resolved.selection,
+      replacement: input.replacement,
+      diff,
+      unifiedDiff: renderUnifiedDiff(resolved.selection.path, resolved.selection.selectionText, input.replacement, resolved.selection.startLine),
+      canApply: true,
+      recommendations: [
+        "这是临时 diff 数据，UI 可以用红色删除和绿色新增展示；MCP 不会持久化高亮。",
+        "确认后调用 knowledge.applyEdit 写回文件；切换文档或发起下一次编辑时，UI 可直接丢弃本次 diff。",
+      ],
+    };
+  }
+
+  async applyEdit(input: ApplyEditInput): Promise<ApplyEditReport> {
+    if (input.confirm !== true) throw new Error("写回 Markdown 前需要 confirm=true，表示用户已确认本次编辑。");
+    const resolved = await this.resolveEditSelection(input);
+    if (input.expectedHash && input.expectedHash !== resolved.selection.contentHash) {
+      throw new Error("文档内容已变化，无法安全应用编辑。请重新预览后再写回。");
+    }
+
+    const updatedContent = `${resolved.content.slice(0, resolved.startOffset)}${input.replacement}${resolved.content.slice(resolved.endOffset)}`;
+    const updatedAt = formatDate(new Date());
+    const finalContent = updateFrontmatterField(updatedContent, "最后更新", updatedAt);
+    await fs.writeFile(this.resolveSafe(resolved.selection.path), finalContent, "utf-8");
+
+    const diff = buildLineDiff(resolved.selection.selectionText, input.replacement);
+    return {
+      path: resolved.selection.path,
+      title: resolved.selection.title,
+      updatedAt,
+      oldHash: resolved.selection.contentHash,
+      newHash: hashText(finalContent),
+      selection: resolved.selection,
+      diff,
+      unifiedDiff: renderUnifiedDiff(resolved.selection.path, resolved.selection.selectionText, input.replacement, resolved.selection.startLine),
     };
   }
 
@@ -1315,6 +1533,112 @@ export class VaultService {
     return files.filter((file): file is { path: string; content: string } => Boolean(file));
   }
 
+  private async documentSummary(filePath: string): Promise<KnowledgeDocumentSummary> {
+    const absolutePath = this.resolveSafe(filePath);
+    const [stat, content] = await Promise.all([fs.stat(absolutePath), fs.readFile(absolutePath, "utf-8")]);
+    const frontmatter = parseFrontmatter(content);
+    const area = areaForPath(filePath);
+    return {
+      path: filePath,
+      title: extractTitle(content) ?? path.posix.basename(filePath, MARKDOWN_EXTENSION),
+      area: area?.id,
+      areaName: area?.name,
+      tags: parseTags(frontmatter.tags),
+      headings: extractMarkdownSections(content).map((section) => section.heading),
+      excerpt: truncate(content.replace(/^---\r?\n[\s\S]*?\r?\n---/, "").replace(/\s+/g, " ").trim(), 180),
+      updatedAt: frontmatter["最后更新"] ?? formatDate(stat.mtime),
+    };
+  }
+
+  private async extractAssetReferences(documentPath: string, content: string): Promise<MarkdownAssetReference[]> {
+    const references = extractMarkdownAssetReferences(content);
+    const directory = path.posix.dirname(documentPath);
+    return Promise.all(references.map(async (reference) => {
+      if (isExternalAssetTarget(reference.target)) {
+        return {
+          markdown: reference.markdown,
+          target: reference.target,
+          kind: assetKind(reference.target),
+          vaultPath: reference.target,
+          absolutePath: reference.target,
+          exists: true,
+        };
+      }
+
+      const vaultPath = resolveMarkdownAssetPath(directory, reference.target);
+      const absolutePath = this.resolveSafe(vaultPath);
+      const exists = Boolean(await this.statIfExists(absolutePath));
+      return {
+        markdown: reference.markdown,
+        target: reference.target,
+        kind: assetKind(reference.target),
+        vaultPath,
+        absolutePath,
+        exists,
+      };
+    }));
+  }
+
+  private async resolveEditSelection(input: PrepareEditInput): Promise<{
+    content: string;
+    startOffset: number;
+    endOffset: number;
+    selection: EditSelectionContext;
+  }> {
+    const targetPath = normalizeMarkdownPath(input.path);
+    const content = await fs.readFile(this.resolveSafe(targetPath), "utf-8");
+    const title = extractTitle(content) ?? path.posix.basename(targetPath, MARKDOWN_EXTENSION);
+    const contextLines = input.contextLines ?? 3;
+
+    if (input.startLine !== undefined || input.endLine !== undefined) {
+      if (!input.startLine || !input.endLine) throw new Error("按行定位编辑时 startLine 和 endLine 必须同时提供。");
+      const range = lineRangeToOffsets(content, input.startLine, input.endLine);
+      const selectionText = content.slice(range.startOffset, range.endOffset);
+      return {
+        content,
+        startOffset: range.startOffset,
+        endOffset: range.endOffset,
+        selection: buildEditSelectionContext({
+          path: targetPath,
+          title,
+          content,
+          selectionText,
+          startLine: input.startLine,
+          endLine: input.endLine,
+          occurrence: 1,
+          occurrenceCount: 1,
+          contextLines,
+        }),
+      };
+    }
+
+    if (!input.selectionText) throw new Error("需要提供 selectionText，或提供 startLine/endLine。");
+    const occurrence = input.occurrence ?? 1;
+    const matches = findTextOccurrences(content, input.selectionText);
+    if (matches.length === 0) throw new Error("未在文档中找到选中文案，请确认选区内容是否仍然存在。");
+    if (occurrence < 1 || occurrence > matches.length) throw new Error(`选中文案出现 ${matches.length} 次，occurrence 必须在 1-${matches.length} 之间。`);
+
+    const match = matches[occurrence - 1];
+    const startLine = offsetToLine(content, match.startOffset);
+    const endLine = offsetToLine(content, Math.max(match.startOffset, match.endOffset - 1));
+    return {
+      content,
+      startOffset: match.startOffset,
+      endOffset: match.endOffset,
+      selection: buildEditSelectionContext({
+        path: targetPath,
+        title,
+        content,
+        selectionText: input.selectionText,
+        startLine,
+        endLine,
+        occurrence,
+        occurrenceCount: matches.length,
+        contextLines,
+      }),
+    };
+  }
+
   private async listMarkdownFiles(directory = ""): Promise<string[]> {
     const absoluteDirectory = this.resolveSafe(directory || ".");
     const entries = await this.readDirectoryIfExists(absoluteDirectory);
@@ -1774,6 +2098,188 @@ function isProjectAiIndexFile(fileName: string): boolean {
   return fileName === PROJECT_AI_INDEX_FILE || fileName === LEGACY_PROJECT_AI_INDEX_FILE;
 }
 
+function areaForPath(filePath: string): typeof KNOWLEDGE_AREAS[number] | undefined {
+  return KNOWLEDGE_AREAS.find((area) => filePath === area.root || filePath.startsWith(`${area.root}/`));
+}
+
+function parseTags(value: string | undefined): string[] {
+  if (!value) return [];
+  return value.replace(/^\[/, "").replace(/\]$/, "").split(",").map((tag) => tag.trim()).filter(Boolean);
+}
+
+function simplifyMarkdownAssetSyntax(content: string): string {
+  return content
+    .replace(/!\[\[([^\]]+)\]\]/g, (_match, target: string) => `[${assetKind(target) === "image" ? "图片" : "文件"}: ${path.posix.basename(target)}]`)
+    .replace(/!\[[^\]]*]\(([^)]+)\)/g, (_match, target: string) => `[${assetKind(target) === "image" ? "图片" : "文件"}: ${path.posix.basename(target)}]`);
+}
+
+function extractMarkdownAssetReferences(content: string): Array<{ markdown: string; target: string }> {
+  const references: Array<{ markdown: string; target: string }> = [];
+  for (const match of content.matchAll(/!\[\[([^\]]+)\]\]/g)) {
+    references.push({ markdown: match[0], target: match[1].split("|")[0].trim() });
+  }
+  for (const match of content.matchAll(/!\[[^\]]*]\(([^)]+)\)/g)) {
+    references.push({ markdown: match[0], target: match[1].trim() });
+  }
+  return references;
+}
+
+function resolveMarkdownAssetPath(documentDirectory: string, target: string): string {
+  const cleanTarget = target.replace(/^<|>$/g, "").replaceAll("\\", "/").replace(/^\/+/, "");
+  const normalizedDirectory = documentDirectory === "." ? "" : documentDirectory;
+  return path.posix.normalize(normalizedDirectory ? `${normalizedDirectory}/${cleanTarget}` : cleanTarget).replace(/^(\.\.\/)+/, "");
+}
+
+function isExternalAssetTarget(target: string): boolean {
+  return /^[a-z]+:\/\//i.test(target) || target.startsWith("#") || target.startsWith("data:");
+}
+
+function assetKind(target: string): "image" | "pdf" | "file" {
+  const extension = path.posix.extname(target.split("?")[0]).toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"].includes(extension)) return "image";
+  if (extension === ".pdf") return "pdf";
+  return "file";
+}
+
+function lineRangeToOffsets(content: string, startLine: number, endLine: number): { startOffset: number; endOffset: number } {
+  if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine) {
+    throw new Error("行号范围不合法，startLine/endLine 必须是从 1 开始的整数。");
+  }
+
+  const starts = lineStartOffsets(content);
+  if (startLine > starts.length) throw new Error(`startLine 超出文档行数：${startLine}`);
+  if (endLine > starts.length) throw new Error(`endLine 超出文档行数：${endLine}`);
+  const startOffset = starts[startLine - 1];
+  const endOffset = endLine >= starts.length ? content.length : starts[endLine] - lineBreakLengthBefore(content, starts[endLine]);
+  return { startOffset, endOffset };
+}
+
+function lineStartOffsets(content: string): number[] {
+  const offsets = [0];
+  for (let index = 0; index < content.length; index += 1) {
+    if (content[index] === "\n") offsets.push(index + 1);
+  }
+  return offsets;
+}
+
+function lineBreakLengthBefore(content: string, offset: number): number {
+  if (offset >= 2 && content[offset - 2] === "\r" && content[offset - 1] === "\n") return 2;
+  return offset >= 1 && content[offset - 1] === "\n" ? 1 : 0;
+}
+
+function offsetToLine(content: string, offset: number): number {
+  let line = 1;
+  const boundedOffset = Math.max(0, Math.min(offset, content.length));
+  for (let index = 0; index < boundedOffset; index += 1) {
+    if (content[index] === "\n") line += 1;
+  }
+  return line;
+}
+
+function findTextOccurrences(content: string, text: string): Array<{ startOffset: number; endOffset: number }> {
+  const matches: Array<{ startOffset: number; endOffset: number }> = [];
+  if (!text) return matches;
+  let index = content.indexOf(text);
+  while (index !== -1) {
+    matches.push({ startOffset: index, endOffset: index + text.length });
+    index = content.indexOf(text, index + Math.max(1, text.length));
+  }
+  return matches;
+}
+
+function buildEditSelectionContext(input: {
+  path: string;
+  title: string;
+  content: string;
+  selectionText: string;
+  startLine: number;
+  endLine: number;
+  occurrence: number;
+  occurrenceCount: number;
+  contextLines: number;
+}): EditSelectionContext {
+  return {
+    path: input.path,
+    title: input.title,
+    contentHash: hashText(input.content),
+    selectionText: input.selectionText,
+    startLine: input.startLine,
+    endLine: input.endLine,
+    occurrence: input.occurrence,
+    occurrenceCount: input.occurrenceCount,
+    beforeContext: extractLineContext(input.content, Math.max(1, input.startLine - input.contextLines), input.startLine - 1),
+    afterContext: extractLineContext(input.content, input.endLine + 1, input.endLine + input.contextLines),
+  };
+}
+
+function extractLineContext(content: string, startLine: number, endLine: number): string {
+  if (endLine < startLine) return "";
+  return content.split(/\r?\n/).slice(startLine - 1, endLine).join("\n");
+}
+
+function buildLineDiff(original: string, replacement: string): EditDiffBlock[] {
+  const originalLines = splitDiffLines(original);
+  const replacementLines = splitDiffLines(replacement);
+  const table: number[][] = Array.from({ length: originalLines.length + 1 }, () => Array(replacementLines.length + 1).fill(0));
+
+  for (let left = originalLines.length - 1; left >= 0; left -= 1) {
+    for (let right = replacementLines.length - 1; right >= 0; right -= 1) {
+      table[left][right] = originalLines[left] === replacementLines[right]
+        ? table[left + 1][right + 1] + 1
+        : Math.max(table[left + 1][right], table[left][right + 1]);
+    }
+  }
+
+  const blocks: EditDiffBlock[] = [];
+  let left = 0;
+  let right = 0;
+  const push = (type: EditDiffBlock["type"], line: string) => {
+    const last = blocks[blocks.length - 1];
+    if (last?.type === type) last.lines.push(line);
+    else blocks.push({ type, lines: [line] });
+  };
+
+  while (left < originalLines.length && right < replacementLines.length) {
+    if (originalLines[left] === replacementLines[right]) {
+      push("context", originalLines[left]);
+      left += 1;
+      right += 1;
+    } else if (table[left + 1][right] >= table[left][right + 1]) {
+      push("removed", originalLines[left]);
+      left += 1;
+    } else {
+      push("added", replacementLines[right]);
+      right += 1;
+    }
+  }
+  while (left < originalLines.length) {
+    push("removed", originalLines[left]);
+    left += 1;
+  }
+  while (right < replacementLines.length) {
+    push("added", replacementLines[right]);
+    right += 1;
+  }
+
+  return blocks;
+}
+
+function splitDiffLines(value: string): string[] {
+  if (!value) return [];
+  return value.split(/\r?\n/);
+}
+
+function renderUnifiedDiff(filePath: string, original: string, replacement: string, startLine: number): string {
+  const diff = buildLineDiff(original, replacement);
+  const originalLineCount = splitDiffLines(original).length || 1;
+  const replacementLineCount = splitDiffLines(replacement).length || 1;
+  const body = diff.flatMap((block) => {
+    const prefix = block.type === "added" ? "+" : block.type === "removed" ? "-" : " ";
+    return block.lines.map((line) => `${prefix}${line}`);
+  }).join("\n");
+  return `--- ${filePath}\n+++ ${filePath}\n@@ -${startLine},${originalLineCount} +${startLine},${replacementLineCount} @@\n${body}`;
+}
+
 function updateMarkdownSection(
   content: string,
   input: { heading: string; content: string; mode: "replace" | "append" | "prepend"; createIfMissing: boolean },
@@ -1912,9 +2418,13 @@ function inferDraftPath(category: string | undefined, text: string): string | un
 
 function hashManifest(manifest: Record<string, unknown>): string {
   const stable = JSON.stringify(sortObject(manifest));
+  return hashText(stable);
+}
+
+function hashText(value: string): string {
   let hash = 0;
-  for (let index = 0; index < stable.length; index += 1) {
-    hash = (hash * 31 + stable.charCodeAt(index)) >>> 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
   }
   return hash.toString(16);
 }

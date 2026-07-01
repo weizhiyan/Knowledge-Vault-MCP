@@ -74,6 +74,16 @@ server.tool(
 );
 
 server.tool(
+  "knowledge.documents",
+  "List Markdown documents grouped by knowledge area for a future browser/editor UI. Returns category card data plus document summaries.",
+  {
+    area: z.enum(["work_product", "design", "ai_share", "skills_tutorials", "articles", "reference", "all"]).default("all").describe("Knowledge area to list. all returns documents from all configured areas."),
+    limit: z.number().int().positive().max(200).default(80).describe("Maximum number of documents to return."),
+  },
+  async (input) => toTextResult(await vault.listDocuments(input)),
+);
+
+server.tool(
   "knowledge.loadProject",
   "Load one project's AI索引.md as the high-signal project background.",
   {
@@ -102,6 +112,17 @@ server.tool(
   async ({ path }) => ({
     content: [{ type: "text", text: await vault.readFile(path) }],
   }),
+);
+
+server.tool(
+  "knowledge.readDocumentForUi",
+  "Read one Markdown document with UI-friendly metadata: simplified source, headings, embedded assets, and a document reference object.",
+  {
+    path: z.string().min(1).describe("Vault-relative markdown path."),
+    simplifyImages: z.boolean().default(true).describe("Replace embedded image/PDF syntax with short placeholders in displaySource."),
+    includeAbsolutePath: z.boolean().default(false).describe("Return the local absolute file path for desktop UI actions such as open file location."),
+  },
+  async (input) => toTextResult(await vault.readDocumentForUi(input)),
 );
 
 server.tool(
@@ -194,6 +215,45 @@ server.tool(
     mode: z.enum(["append", "replace"]).default("append").describe("Append to existing notes by default; replace only after explicit user confirmation."),
   },
   async (input) => toTextResult(await vault.writeSplitNote(input)),
+);
+
+const editSelectionSchema = {
+  path: z.string().min(1).describe("Vault-relative markdown path."),
+  selectionText: z.string().optional().describe("Exact selected text from source mode. Use occurrence when the same text appears multiple times."),
+  startLine: z.number().int().positive().optional().describe("1-based start line for line-range editing."),
+  endLine: z.number().int().positive().optional().describe("1-based end line for line-range editing."),
+  occurrence: z.number().int().positive().default(1).describe("Which exact selectionText occurrence to use when it appears multiple times."),
+  contextLines: z.number().int().min(0).max(20).default(3).describe("How many lines of before/after context to return."),
+};
+
+server.tool(
+  "knowledge.prepareEdit",
+  "Resolve a selected Markdown text or line range into an AI-edit card context without writing files.",
+  editSelectionSchema,
+  async (input) => toTextResult(await vault.prepareEdit(input)),
+);
+
+server.tool(
+  "knowledge.previewEdit",
+  "Preview a replacement for selected Markdown text or a line range and return transient red/green diff data without writing files.",
+  {
+    ...editSelectionSchema,
+    replacement: z.string().describe("AI-generated replacement text for the selected range."),
+    expectedHash: z.string().optional().describe("Optional contentHash from prepareEdit/read preview. When provided, mismatches block preview."),
+  },
+  async (input) => toTextResult(await vault.previewEdit(input)),
+);
+
+server.tool(
+  "knowledge.applyEdit",
+  "Apply a confirmed replacement to selected Markdown text or a line range. Use only after user confirmation.",
+  {
+    ...editSelectionSchema,
+    replacement: z.string().describe("AI-generated replacement text for the selected range."),
+    expectedHash: z.string().optional().describe("Optional contentHash from prepareEdit/previewEdit. Mismatches block write."),
+    confirm: z.boolean().default(false).describe("Must be true to write the Markdown file."),
+  },
+  async (input) => toTextResult(await vault.applyEdit(input)),
 );
 
 server.tool(

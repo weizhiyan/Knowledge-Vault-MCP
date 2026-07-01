@@ -1,6 +1,6 @@
 {
   "name": "obsidian-knowledge-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local MCP server for an Obsidian work knowledge vault and AgentShell config injection.",
   "type": "module",
   "bin": {
