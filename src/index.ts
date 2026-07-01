@@ -75,7 +75,7 @@ server.tool(
 
 server.tool(
   "knowledge.loadProject",
-  "Load one project's _AI索引.md as the high-signal project background.",
+  "Load one project's AI索引.md as the high-signal project background.",
   {
     projectName: z.string().min(1).describe("Project name or partial project name."),
   },
@@ -125,7 +125,7 @@ server.tool(
 
 server.tool(
   "knowledge.createProject",
-  "Create a project knowledge-base folder with the three-file structure: 项目介绍, _AI索引, and 原始资料.",
+  "Create a project knowledge-base folder with the three-file structure: 项目介绍, AI索引, and 原始资料.",
   {
     name: z.string().min(1).describe("Project folder name."),
     type: z.string().optional().describe("Project type, e.g. 产品设计项目."),
@@ -197,6 +197,20 @@ server.tool(
 );
 
 server.tool(
+  "knowledge.attachAsset",
+  "Copy an image, screenshot, PDF, or other file into a project's attachments folder and insert an Obsidian embed/link into 项目介绍 or 原始资料.",
+  {
+    projectName: z.string().min(1).describe("Project name or partial project name."),
+    sourcePath: z.string().min(1).describe("Absolute or accessible local file path to copy into the project attachments folder."),
+    targetDocument: z.enum(["project_intro", "raw_material", "none"]).default("project_intro").describe("Where to append the embed/link. project_intro writes to 项目介绍; raw_material writes to 原始资料; none only copies and returns Markdown."),
+    caption: z.string().optional().describe("Optional caption shown near the embedded asset."),
+    assetName: z.string().optional().describe("Optional destination file name. If omitted, the source file name is used."),
+    embed: z.boolean().default(true).describe("Use Obsidian embed syntax by default, e.g. ![[attachments/image.png]]."),
+  },
+  async (input) => toTextResult(await vault.attachAsset(input)),
+);
+
+server.tool(
   "knowledge.update",
   "Append to or replace one knowledge file. Use only after user confirmation for writes.",
   {
@@ -262,7 +276,7 @@ server.tool(
 
 server.tool(
   "knowledge.userAnalysisContext",
-  "Load the project _AI索引.md and return user-analysis dimension choices for AgentShell.",
+  "Load the project AI索引.md and return user-analysis dimension choices for AgentShell.",
   {
     projectName: z.string().min(1),
   },
@@ -280,7 +294,7 @@ server.tool(
 
 server.tool(
   "knowledge.competitorAnalysisContext",
-  "Load the project _AI索引.md, report staleness, and return comparison-dimension choices for AgentShell.",
+  "Load the project AI索引.md, report staleness, and return comparison-dimension choices for AgentShell.",
   {
     projectName: z.string().min(1),
   },

@@ -29,18 +29,25 @@ npm start
 项目知识默认用三件套：
 
 - `XXXX项目介绍.md`
-- `_AI索引.md`
+- `AI索引.md`
 - `原始资料.md`
 
-非项目内容默认单文档保存，不额外拆 `_AI索引` 或 `原始资料`。
+非项目内容默认单文档保存，不额外拆 `AI索引` 或 `原始资料`。
+
+项目附件统一放在：
+
+- `01-项目/项目名/attachments/`
+
+图片、截图和 PDF 仍然嵌入到 Markdown 中查看。默认写入 `项目介绍.md` 的“附件”章节；原始截图、资料 PDF 或来源备份可写入 `原始资料.md`。`AI索引.md` 默认只保留摘要和链接，不直接塞大图。
 
 ## 关键能力
 
 - `knowledge.detectObsidianVault`：检测是否是 Obsidian Vault
 - `knowledge.planNoteWrite`：判断 direct / ask_user / split_write
 - `knowledge.writeSplitNote`：写“一主一辅”，自动双链
+- `knowledge.attachAsset`：复制图片/PDF到项目 `attachments/`，并插入 `![[attachments/文件名]]`
 - `knowledge.search`：默认只搜 `01-项目`
-- `knowledge.loadProject`：读取项目 `_AI索引.md`
+- `knowledge.loadProject`：读取项目 `AI索引.md`
 - `knowledge.createProject`：创建项目三件套
 - `knowledge.inbox` / `knowledge.archiveInbox`：收件箱整理
 - `knowledge.healthCheck`：知识库体检
