@@ -83,6 +83,14 @@ const BUILT_IN_SKILLS = [
     safeguards: ["不一次读取整个 vault", "长文档先列目录", "引用来源文件"],
   },
   {
+    id: "kb.routeContext",
+    name: "AI 上下文触发规划",
+    category: "read",
+    triggers: ["触发词", "别名", "项目背景", "需要知识库上下文"],
+    description: "根据用户问题命中项目名、别名、触发词和标签，规划 AI 应该读取哪些 Markdown。",
+    safeguards: ["触发词只做候选召回", "多个候选分数接近时返回 user_choice", "默认优先读取 AI索引"],
+  },
+  {
     id: "kb.archiveInbox",
     name: "收件箱整理",
     category: "organize",
@@ -402,6 +410,86 @@ export interface ApplyEditReport {
   unifiedDiff: string;
 }
 
+export interface ContextRulesInput {
+  scope?: "projects" | "all";
+  includeEmpty?: boolean;
+  limit?: number;
+}
+
+export interface ContextRuleDocument {
+  path: string;
+  title: string;
+  area?: KnowledgeAreaId;
+  areaName?: string;
+  projectName?: string;
+  type?: string;
+  tags: string[];
+  aliases: string[];
+  triggers: string[];
+  readPriority: "high" | "medium" | "low";
+  updatedAt?: string;
+  excerpt: string;
+}
+
+export interface ContextRulesReport {
+  rules: ContextRuleDocument[];
+  recommendations: string[];
+}
+
+export interface PlanContextInput {
+  query: string;
+  scope?: "projects" | "all";
+  maxCandidates?: number;
+  confidenceThreshold?: number;
+  ambiguityMargin?: number;
+}
+
+export interface ContextMatch {
+  field: "project" | "alias" | "trigger" | "tag" | "title" | "content" | "type" | "priority";
+  value: string;
+  score: number;
+}
+
+export interface ContextCandidate extends ContextRuleDocument {
+  score: number;
+  confidence: number;
+  matched: ContextMatch[];
+  reasons: string[];
+  loadPaths: string[];
+}
+
+export interface PlanContextReport {
+  status: "resolved" | "needs_user_choice" | "no_match";
+  query: string;
+  selected?: ContextCandidate;
+  candidates: ContextCandidate[];
+  loadPaths: string[];
+  choice?: UserChoicePayload;
+  recommendations: string[];
+}
+
+export interface LoadContextPlanInput {
+  query?: string;
+  paths?: string[];
+  scope?: "projects" | "all";
+  maxChars?: number;
+}
+
+export interface LoadedContextFile {
+  path: string;
+  title: string;
+  content: string;
+  truncated: boolean;
+}
+
+export interface LoadContextPlanReport {
+  status: "loaded" | "needs_user_choice" | "no_match";
+  plan?: PlanContextReport;
+  files: LoadedContextFile[];
+  combinedContent: string;
+  recommendations: string[];
+}
+
 export interface ConnectorStatusInput {
   manifestPath?: string;
   connectorId?: string;
@@ -700,6 +788,124 @@ export class VaultService {
       selection: resolved.selection,
       diff,
       unifiedDiff: renderUnifiedDiff(resolved.selection.path, resolved.selection.selectionText, input.replacement, resolved.selection.startLine),
+    };
+  }
+
+  async contextRules(input: ContextRulesInput = {}): Promise<ContextRulesReport> {
+    const rules = await this.contextRuleDocuments(input.scope ?? "all");
+    const filtered = input.includeEmpty
+      ? rules
+      : rules.filter((rule) => rule.triggers.length > 0 || rule.aliases.length > 0 || rule.projectName);
+
+    return {
+      rules: filtered.slice(0, input.limit ?? 120),
+      recommendations: [
+        "触发词用于召回候选上下文，不要求全局唯一。",
+        "项目名和别名权重高于普通触发词；多个候选分数接近时应让用户选择。",
+        "建议在 AI索引.md 中维护 项目、别名、触发词、读取优先级。",
+      ],
+    };
+  }
+
+  async planContext(input: PlanContextInput): Promise<PlanContextReport> {
+    const query = input.query.trim();
+    if (!query) throw new Error("query 不能为空");
+
+    const rules = await this.contextRuleDocuments(input.scope ?? "all");
+    const candidates = rules
+      .map((rule) => scoreContextRule(rule, query))
+      .filter((candidate) => candidate.score > 0)
+      .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
+      .slice(0, input.maxCandidates ?? 6);
+
+    if (candidates.length === 0) {
+      return {
+        status: "no_match",
+        query,
+        candidates: [],
+        loadPaths: [],
+        recommendations: [
+          "未命中项目名、别名、触发词或标签。可以改用 knowledge.search，或让用户选择归档位置。",
+          "如果这是长期会复用的知识，建议给对应 AI索引.md 增加 触发词 或 别名。",
+        ],
+      };
+    }
+
+    const top = candidates[0];
+    const second = candidates[1];
+    const confidenceThreshold = input.confidenceThreshold ?? 0.62;
+    const ambiguityMargin = input.ambiguityMargin ?? 0.15;
+    const resolved = top.confidence >= confidenceThreshold && (!second || top.confidence - second.confidence >= ambiguityMargin);
+
+    if (resolved) {
+      return {
+        status: "resolved",
+        query,
+        selected: top,
+        candidates,
+        loadPaths: top.loadPaths,
+        recommendations: [
+          `已选择 ${top.title}，置信度 ${top.confidence.toFixed(2)}。`,
+          "默认只读取命中的上下文入口；需要原文、截图或来源时再读取原始资料。",
+        ],
+      };
+    }
+
+    return {
+      status: "needs_user_choice",
+      query,
+      candidates,
+      loadPaths: [],
+      choice: buildContextChoicePayload(candidates),
+      recommendations: [
+        "命中多个候选且分数接近，建议让用户选择项目或文档。",
+        "宿主有弹窗就用弹窗；没有弹窗就在聊天里询问。",
+      ],
+    };
+  }
+
+  async loadContextPlan(input: LoadContextPlanInput): Promise<LoadContextPlanReport> {
+    const maxChars = input.maxChars ?? 6000;
+    let plan: PlanContextReport | undefined;
+    let paths = input.paths?.map(normalizeMarkdownPath).filter(Boolean) ?? [];
+
+    if (paths.length === 0) {
+      if (!input.query) throw new Error("需要提供 query 或 paths");
+      plan = await this.planContext({ query: input.query, scope: input.scope });
+      if (plan.status !== "resolved") {
+        return {
+          status: plan.status,
+          plan,
+          files: [],
+          combinedContent: "",
+          recommendations: plan.recommendations,
+        };
+      }
+      paths = plan.loadPaths;
+    }
+
+    const uniquePaths = [...new Set(paths)];
+    const perFileLimit = Math.max(800, Math.floor(maxChars / Math.max(1, uniquePaths.length)));
+    const files = await Promise.all(uniquePaths.map(async (filePath): Promise<LoadedContextFile> => {
+      const content = await fs.readFile(this.resolveSafe(filePath), "utf-8");
+      const truncatedContent = truncate(content, perFileLimit);
+      return {
+        path: filePath,
+        title: extractTitle(content) ?? path.posix.basename(filePath, MARKDOWN_EXTENSION),
+        content: truncatedContent,
+        truncated: truncatedContent.length < content.length,
+      };
+    }));
+
+    return {
+      status: "loaded",
+      plan,
+      files,
+      combinedContent: files.map((file) => `## 来源：${file.path}\n\n${file.content}`).join("\n\n"),
+      recommendations: [
+        "已按上下文计划读取 Markdown。回答时应引用来源路径。",
+        "如果用户要求核对原文、图片或来源，再读取原始资料或附件所在文档。",
+      ],
     };
   }
 
@@ -1579,6 +1785,39 @@ export class VaultService {
     }));
   }
 
+  private async contextRuleDocuments(scope: "projects" | "all"): Promise<ContextRuleDocument[]> {
+    const roots = scope === "projects" ? ["01-项目"] : KNOWLEDGE_AREAS.map((area) => area.root);
+    const filePaths = [...new Set((await Promise.all(roots.map((root) => this.listMarkdownFiles(root)))).flat())];
+    const rules = await Promise.all(filePaths.map((filePath) => this.contextRuleDocument(filePath)));
+    return rules.sort((left, right) => priorityWeight(right.readPriority) - priorityWeight(left.readPriority) || left.path.localeCompare(right.path));
+  }
+
+  private async contextRuleDocument(filePath: string): Promise<ContextRuleDocument> {
+    const absolutePath = this.resolveSafe(filePath);
+    const [stat, content] = await Promise.all([fs.stat(absolutePath), fs.readFile(absolutePath, "utf-8")]);
+    const frontmatter = parseFrontmatter(content);
+    const area = areaForPath(filePath);
+    const tags = parseTags(frontmatter.tags ?? frontmatter["标签"]);
+    const title = extractTitle(content) ?? path.posix.basename(filePath, MARKDOWN_EXTENSION);
+    const projectName = firstNonEmpty(frontmatter["项目"], projectNameForPath(filePath));
+    const type = firstNonEmpty(frontmatter["类型"], inferDocumentType(filePath, title, tags));
+
+    return {
+      path: filePath,
+      title,
+      area: area?.id,
+      areaName: area?.name,
+      projectName,
+      type,
+      tags,
+      aliases: uniqueStrings(parseTags(frontmatter["别名"] ?? frontmatter.aliases)),
+      triggers: uniqueStrings(parseTags(frontmatter["触发词"] ?? frontmatter.triggers)),
+      readPriority: parseReadPriority(frontmatter["读取优先级"] ?? frontmatter["优先级"]),
+      updatedAt: frontmatter["最后更新"] ?? formatDate(stat.mtime),
+      excerpt: truncate(content.replace(/^---\r?\n[\s\S]*?\r?\n---/, "").replace(/\s+/g, " ").trim(), 220),
+    };
+  }
+
   private async resolveEditSelection(input: PrepareEditInput): Promise<{
     content: string;
     startOffset: number;
@@ -1857,7 +2096,7 @@ function renderProjectIntro(input: { name: string; type: string; status: string;
 }
 
 function renderProjectAiIndex(input: { name: string; type: string; status: string; date: string }): string {
-  return `---\ntags: [AI索引, 项目]\n创建时间: ${input.date}\n最后更新: ${input.date}\n项目状态: ${input.status}\n项目类型: ${input.type}\n---\n\n# AI索引\n\n> 主体文档：[[01-项目/${input.name}/${input.name}项目介绍|${input.name}项目介绍]]\n> 原始资料：[[01-项目/${input.name}/原始资料|原始资料]]\n\n## 项目一句话\n\n（控制在一句话内，说明项目是什么。）\n\n## AI默认上下文\n\n- 产品类型：\n- 目标场景：\n- 核心用户：\n- 核心价值：\n- 当前资料状态：\n\n## 核心能力速览\n\n- \n\n## 关键词\n\n（用顿号分隔关键词。）\n\n## 使用规则\n\n- 一般回答项目背景时，优先读本文件。\n- 写正式介绍、页面文案、汇报材料时，再读 [[01-项目/${input.name}/${input.name}项目介绍|${input.name}项目介绍]]。\n- 核对原始措辞或查看图片上下文时，再读 [[01-项目/${input.name}/原始资料|原始资料]]。\n- 做交互、视觉或页面分析时，本文件只作为背景，不默认读取原始资料。\n- 图片、截图和 PDF 默认放入项目介绍或原始资料的附件章节，本文件只保留摘要和链接。\n`;
+  return `---\ntags: [AI索引, 项目]\n项目: ${input.name}\n类型: AI索引\n别名: []\n触发词: []\n读取优先级: high\n创建时间: ${input.date}\n最后更新: ${input.date}\n项目状态: ${input.status}\n项目类型: ${input.type}\n---\n\n# AI索引\n\n> 主体文档：[[01-项目/${input.name}/${input.name}项目介绍|${input.name}项目介绍]]\n> 原始资料：[[01-项目/${input.name}/原始资料|原始资料]]\n\n## 项目一句话\n\n（控制在一句话内，说明项目是什么。）\n\n## AI默认上下文\n\n- 产品类型：\n- 目标场景：\n- 核心用户：\n- 核心价值：\n- 当前资料状态：\n\n## 核心能力速览\n\n- \n\n## 关键词\n\n（用顿号分隔关键词。）\n\n## 使用规则\n\n- 一般回答项目背景时，优先读本文件。\n- 写正式介绍、页面文案、汇报材料时，再读 [[01-项目/${input.name}/${input.name}项目介绍|${input.name}项目介绍]]。\n- 核对原始措辞或查看图片上下文时，再读 [[01-项目/${input.name}/原始资料|原始资料]]。\n- 做交互、视觉或页面分析时，本文件只作为背景，不默认读取原始资料。\n- 图片、截图和 PDF 默认放入项目介绍或原始资料的附件章节，本文件只保留摘要和链接。\n`;
 }
 
 function renderRawMaterialDocument(projectName: string, date: string): string {
@@ -2104,7 +2343,144 @@ function areaForPath(filePath: string): typeof KNOWLEDGE_AREAS[number] | undefin
 
 function parseTags(value: string | undefined): string[] {
   if (!value) return [];
-  return value.replace(/^\[/, "").replace(/\]$/, "").split(",").map((tag) => tag.trim()).filter(Boolean);
+  return value
+    .replace(/^\[/, "")
+    .replace(/\]$/, "")
+    .split(/[,，、]/)
+    .map((tag) => tag.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean);
+}
+
+function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => value?.trim())?.trim();
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function projectNameForPath(filePath: string): string | undefined {
+  const parts = normalizeVaultPath(filePath).split("/");
+  return parts[0] === "01-项目" && parts[1] ? parts[1] : undefined;
+}
+
+function inferDocumentType(filePath: string, title: string, tags: string[]): string | undefined {
+  const fileName = path.posix.basename(filePath, MARKDOWN_EXTENSION);
+  const haystack = `${fileName}\n${title}\n${tags.join("\n")}`;
+  if (haystack.includes("AI索引") || haystack.includes(LEGACY_PROJECT_AI_INDEX_FILE)) return "AI索引";
+  if (haystack.includes("项目介绍")) return "项目介绍";
+  if (haystack.includes("原始资料")) return "原始资料";
+  if (haystack.includes("迭代")) return "迭代记录";
+  return undefined;
+}
+
+function parseReadPriority(value: string | undefined): "high" | "medium" | "low" {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "high" || normalized === "高") return "high";
+  if (normalized === "low" || normalized === "低") return "low";
+  return "medium";
+}
+
+function priorityWeight(priority: "high" | "medium" | "low"): number {
+  if (priority === "high") return 12;
+  if (priority === "medium") return 6;
+  return 0;
+}
+
+function scoreContextRule(rule: ContextRuleDocument, query: string): ContextCandidate {
+  const normalizedQuery = normalizeForMatch(query);
+  const queryTokens = tokenize(query);
+  const matched: ContextMatch[] = [];
+  let score = 0;
+
+  const addTermMatches = (field: ContextMatch["field"], values: string[], weight: number) => {
+    for (const value of values) {
+      const normalizedValue = normalizeForMatch(value);
+      if (!normalizedValue) continue;
+      if (normalizedQuery.includes(normalizedValue) || (normalizedValue.length >= 4 && normalizedValue.includes(normalizedQuery))) {
+        matched.push({ field, value, score: weight });
+        score += weight;
+      }
+    }
+  };
+
+  addTermMatches("project", rule.projectName ? [rule.projectName] : [], 70);
+  addTermMatches("alias", rule.aliases, 55);
+  addTermMatches("trigger", rule.triggers, 38);
+  addTermMatches("tag", rule.tags, 18);
+  addTermMatches("title", [rule.title], 25);
+
+  const contentHaystack = normalizeForMatch(`${rule.title}\n${rule.excerpt}`);
+  for (const token of queryTokens) {
+    const normalizedToken = normalizeForMatch(token);
+    if (normalizedToken.length < 2) continue;
+    const occurrences = countOccurrences(contentHaystack, normalizedToken);
+    if (occurrences > 0) {
+      const tokenScore = Math.min(10, occurrences * 3);
+      matched.push({ field: "content", value: token, score: tokenScore });
+      score += tokenScore;
+    }
+  }
+
+  if (rule.type === "AI索引" && score > 0) {
+    matched.push({ field: "type", value: "AI索引", score: 10 });
+    score += 10;
+  }
+
+  const priorityScore = priorityWeight(rule.readPriority);
+  if (priorityScore > 0 && score > 0) {
+    matched.push({ field: "priority", value: rule.readPriority, score: priorityScore });
+    score += priorityScore;
+  }
+
+  const confidence = Math.min(0.98, score / 100);
+  const reasons = matched
+    .filter((match) => match.field !== "priority")
+    .slice(0, 5)
+    .map((match) => `${contextMatchLabel(match.field)}：${match.value}`);
+
+  return {
+    ...rule,
+    score,
+    confidence,
+    matched,
+    reasons,
+    loadPaths: [rule.path],
+  };
+}
+
+function normalizeForMatch(value: string): string {
+  return value.toLowerCase().replace(/[ \t\r\n#：:，,。.!！?？()[\]【】「」"'“”‘’]/g, "");
+}
+
+function contextMatchLabel(field: ContextMatch["field"]): string {
+  const labels: Record<ContextMatch["field"], string> = {
+    project: "项目",
+    alias: "别名",
+    trigger: "触发词",
+    tag: "标签",
+    title: "标题",
+    content: "正文摘要",
+    type: "类型",
+    priority: "优先级",
+  };
+  return labels[field];
+}
+
+function buildContextChoicePayload(candidates: ContextCandidate[]): UserChoicePayload {
+  return {
+    type: "user_choice",
+    question: "命中多个可能的上下文，这次要使用哪一个？",
+    style: "single_select",
+    options: [
+      ...candidates.slice(0, 8).map((candidate) => ({
+        label: candidate.projectName ? `${candidate.projectName} — ${candidate.title}` : candidate.title,
+        value: candidate.path,
+        description: `${candidate.reasons.join("、") || "命中文档内容"}；置信度 ${candidate.confidence.toFixed(2)}`,
+      })),
+      { label: "都不是，先不读取知识库", value: "__skip__", description: "本次不加载上下文" },
+    ],
+  };
 }
 
 function simplifyMarkdownAssetSyntax(content: string): string {

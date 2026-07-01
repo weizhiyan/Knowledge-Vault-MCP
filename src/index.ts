@@ -12,7 +12,7 @@ const vault = new VaultService(DEFAULT_VAULT_ROOT);
 
 const server = new McpServer({
   name: "obsidian-knowledge-mcp",
-  version: "0.1.0",
+  version: "0.3.0",
 });
 
 server.tool(
@@ -90,6 +90,42 @@ server.tool(
     projectName: z.string().min(1).describe("Project name or partial project name."),
   },
   async ({ projectName }) => toTextResult(await vault.loadProjectContext(projectName)),
+);
+
+server.tool(
+  "knowledge.contextRules",
+  "List AI context trigger rules from Markdown frontmatter fields such as 项目, 别名, 触发词, 标签, 类型, and 读取优先级.",
+  {
+    scope: z.enum(["projects", "all"]).default("all").describe("projects scans 01-项目 only; all scans all configured knowledge areas."),
+    includeEmpty: z.boolean().default(false).describe("Include documents without explicit trigger words or aliases."),
+    limit: z.number().int().positive().max(300).default(120).describe("Maximum number of rule documents to return."),
+  },
+  async (input) => toTextResult(await vault.contextRules(input)),
+);
+
+server.tool(
+  "knowledge.planContext",
+  "Plan which knowledge documents an agent should read for a user query by scoring project names, aliases, trigger words, tags, titles, and priority. Ambiguous matches return user_choice.",
+  {
+    query: z.string().min(1).describe("User message or task to resolve into knowledge context."),
+    scope: z.enum(["projects", "all"]).default("all").describe("projects scans 01-项目 only; all scans all configured knowledge areas."),
+    maxCandidates: z.number().int().positive().max(20).default(6).describe("Maximum number of candidates to return."),
+    confidenceThreshold: z.number().min(0).max(1).default(0.62).describe("Minimum confidence for automatic resolution."),
+    ambiguityMargin: z.number().min(0).max(1).default(0.15).describe("Required confidence gap between top candidates."),
+  },
+  async (input) => toTextResult(await vault.planContext(input)),
+);
+
+server.tool(
+  "knowledge.loadContextPlan",
+  "Load Markdown context from explicit paths or from knowledge.planContext when a query resolves confidently.",
+  {
+    query: z.string().optional().describe("User query to resolve when paths are not provided."),
+    paths: z.array(z.string().min(1)).optional().describe("Explicit vault-relative Markdown paths to load."),
+    scope: z.enum(["projects", "all"]).default("all").describe("Scope used when resolving query."),
+    maxChars: z.number().int().positive().max(30000).default(6000).describe("Approximate maximum combined characters to return."),
+  },
+  async (input) => toTextResult(await vault.loadContextPlan(input)),
 );
 
 server.tool(

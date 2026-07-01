@@ -68,6 +68,7 @@ flowchart TB
 | 附件仍在正文里看 | 图片、截图、PDF 统一管理，但阅读时仍嵌入 Markdown |
 | UI 能力后置 | MCP 提供能力协议，不把界面写死在某个宿主软件里 |
 | 写入要可控 | 修改文件的工具需要明确目标、预览或确认 |
+| 触发词只做召回 | 触发词可以重复，用来找候选；归属不确定时让用户选择 |
 
 ## 知识库结构
 
@@ -103,6 +104,34 @@ flowchart LR
 
 只有内容很长、流程很多、prompt 很多、推导过程很重时，才拆 AI 附录。
 
+## AI 上下文触发
+
+AI 对话时不应该无脑读取整个知识库。推荐在可作为上下文入口的 Markdown，尤其是项目 `AI索引.md`，维护这些 frontmatter 字段：
+
+```yaml
+---
+项目: 介质6100
+类型: AI索引
+标签: [AI索引, 介质取证, 电子数据取证]
+别名: [6100, 介质6100, 设备6100]
+触发词: [介质取证, 电子数据取证, 取证设备]
+读取优先级: high
+---
+```
+
+判断规则：
+
+| 信号 | 作用 |
+| --- | --- |
+| `项目` | 项目归属，权重最高 |
+| `别名` | 项目的简称、型号、口语叫法 |
+| `触发词` | 用来召回候选上下文，可以重复 |
+| `标签` | 辅助分类和召回 |
+| `类型` | `AI索引` 会优先作为项目入口 |
+| `读取优先级` | 同分时优先读取 high |
+
+触发词不是唯一键。多个项目都命中时，MCP 会返回候选和命中原因；分数接近时返回 `user_choice`，由 agent 让用户选择。
+
 ## 附件规则
 
 项目附件统一放在：
@@ -133,6 +162,7 @@ Markdown 中继续使用嵌入语法：
 | `kb.classifyEntry` | 判断内容应该放到哪个分类或文件 | 记录、保存到知识库、整理内容 |
 | `kb.writeStructured` | 按固定结构写入 Markdown | 补充内容、更新条目 |
 | `kb.loadContext` | 加载项目或主题上下文 | 关于某项目、读取背景 |
+| `kb.routeContext` | 根据触发词、别名、标签规划 AI 应读上下文 | 触发词、项目背景、需要知识库上下文 |
 | `kb.archiveInbox` | 整理收件箱内容 | 归档、清理待整理 |
 | `kb.healthCheck` | 检查知识库结构和维护状态 | 检查知识库、发现问题 |
 
@@ -146,6 +176,9 @@ Markdown 中继续使用嵌入语法：
 | `knowledge.projects` | 列出项目 |
 | `knowledge.documents` | 返回分类卡片和 Markdown 文档摘要 |
 | `knowledge.loadProject` | 读取项目 AI 索引 |
+| `knowledge.contextRules` | 列出带触发词、别名和优先级的上下文规则 |
+| `knowledge.planContext` | 根据用户问题判断候选上下文；不确定时返回选择 |
+| `knowledge.loadContextPlan` | 按规划读取 Markdown 上下文 |
 | `knowledge.search` | 搜索知识库 |
 | `knowledge.get` | 读取完整 Markdown 文件 |
 | `knowledge.sections` | 列出文档 H2 目录 |

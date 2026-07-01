@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.0
+
+### Added
+
+- Added AI context trigger planning based on `项目`, `别名`, `触发词`, `标签`, `类型`, and `读取优先级`.
+- Added context planning tools:
+  - `knowledge.contextRules`
+  - `knowledge.planContext`
+  - `knowledge.loadContextPlan`
+- Added `kb.routeContext` built-in skill guidance.
+
 ## v0.2.0
 
 ### Added
